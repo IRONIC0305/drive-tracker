@@ -18,6 +18,7 @@
       <button id="tabTracker" class="tab tab--active" type="button">Tracker</button>
       <button id="tabLeaderboard" class="tab" type="button">Leaderboard</button>
       <button id="tabMap" class="tab" type="button">Map</button>
+      <button id="tabGroup" class="tab" type="button">Group</button>
     </nav>
 
     <!-- ============ Tracker view ============ -->
@@ -68,7 +69,7 @@
     <section id="mapView" class="view" hidden>
       <div class="share">
         <div class="share__text">
-          <div class="share__title">Share my live location</div>
+          <div class="share__title">Share my live location with this group</div>
           <div class="share__status share__status--off" id="shareStatus">Not sharing</div>
         </div>
         <label class="switch">
@@ -82,10 +83,15 @@
       <ul class="legend">
         <li><span class="legend__dot" style="background:#E0A542"></span>You / route / start</li>
         <li><span class="legend__dot" style="background:#EDEDEA"></span>Trip finish</li>
-        <li><span class="legend__dot" style="background:#5B9AA8"></span>Friends (simulated)</li>
+        <li><span class="legend__dot" style="background:#5B9AA8"></span>Group members sharing (simulated)</li>
       </ul>
 
-      <p class="hint">Friend movement is simulated sample data. Your route appears here after you stop a trip.</p>
+      <p class="hint">Only group members with live sharing switched ON appear here — movement is simulated. Your route appears after you stop a trip.</p>
+    </section>
+
+    <!-- ============ Group view ============ -->
+    <section id="groupView" class="view" hidden>
+      <div id="groupBody"></div>
     </section>
   </main>
 

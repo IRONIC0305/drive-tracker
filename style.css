@@ -111,9 +111,10 @@ body {
 .tab {
   flex: 1;
   font-family: inherit;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 550;
-  padding: 9px 12px;
+  white-space: nowrap;
+  padding: 9px 8px;
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
   background: transparent;
@@ -458,6 +459,11 @@ body {
   background: #16181C;
 }
 
+.switch input:disabled + .switch__slider {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* Map legend */
 .legend {
   list-style: none;
@@ -481,4 +487,160 @@ body {
   height: 10px;
   border-radius: 50%;
   display: inline-block;
+}
+
+/* ============ Group ============ */
+
+/* Setup panels (Create / Join) */
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+
+.panel + .panel {
+  margin-top: 10px;
+}
+
+.panel__title {
+  font-size: 0.98rem;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.panel__hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+/* Text inputs */
+.field {
+  width: 100%;
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.field::placeholder {
+  color: var(--muted);
+}
+
+.field:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.field--code {
+  font-family: var(--font-num);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* In-group header */
+.group__header {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin-bottom: 14px;
+}
+
+.group__name {
+  font-size: 1.15rem;
+  font-weight: 650;
+  margin: 0 0 12px;
+  letter-spacing: -0.01em;
+}
+
+.group__code-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.group__code-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.group__code {
+  font-family: var(--font-num);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+
+.group__section-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+/* Per-member live-sharing pill (reuses .friend rows from the leaderboard) */
+.live-pill {
+  flex: none;
+  align-self: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--bg);
+  white-space: nowrap;
+}
+
+.live-pill--on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* "You" tag on your own member row */
+.tag {
+  font-family: var(--font-ui);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* Button variants used by the group screens */
+.btn--ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.btn--sm {
+  flex: none;
+  font-size: 0.8rem;
+  padding: 8px 12px;
+}
+
+/* Standalone full-width button (not in a flex row like .controls) */
+.btn--block {
+  display: block;
+  width: 100%;
 }

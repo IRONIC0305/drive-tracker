@@ -36,13 +36,16 @@ const curSpeedEl = document.getElementById('curSpeed');
 const topSpeedEl = document.getElementById('topSpeed');
 const pointsEl = document.getElementById('points');
 
-// View switching + leaderboard + map
+// View switching + leaderboard + map + group
 const tabTrackerEl = document.getElementById('tabTracker');
 const tabLeaderboardEl = document.getElementById('tabLeaderboard');
 const tabMapEl = document.getElementById('tabMap');
+const tabGroupEl = document.getElementById('tabGroup');
 const trackerViewEl = document.getElementById('trackerView');
 const leaderboardViewEl = document.getElementById('leaderboardView');
 const mapViewEl = document.getElementById('mapView');
+const groupViewEl = document.getElementById('groupView');
+const groupBodyEl = document.getElementById('groupBody');
 const leaderboardListEl = document.getElementById('leaderboardList');
 const shareToggleEl = document.getElementById('shareToggle');
 const shareStatusEl = document.getElementById('shareStatus');
@@ -190,6 +193,7 @@ const VIEWS = {
   tracker:     { tab: tabTrackerEl,     section: trackerViewEl },
   leaderboard: { tab: tabLeaderboardEl, section: leaderboardViewEl },
   map:         { tab: tabMapEl,         section: mapViewEl },
+  group:       { tab: tabGroupEl,       section: groupViewEl },
 };
 
 let currentView = 'tracker';
@@ -234,6 +238,7 @@ function showView(name) {
 tabTrackerEl.addEventListener('click', () => showView('tracker'));
 tabLeaderboardEl.addEventListener('click', () => showView('leaderboard'));
 tabMapEl.addEventListener('click', () => showView('map'));
+tabGroupEl.addEventListener('click', () => showView('group'));
 
 renderLeaderboard();
 
@@ -320,88 +325,309 @@ function renderTripRoute() {
 }
 
 // ============================================================================
-// MOCK — simulated live friend locations (PART 2)
+// MOCK — people, groups & membership (PARTS 2 + 3)
 // ----------------------------------------------------------------------------
-// Everything between the MOCK START / MOCK END markers is fake. It exists only
-// to preview what live tracking will look like. To wire up Supabase Realtime:
-//
-//   1. Delete MOCK_FRIENDS_LIVE and stepFriendSimulation().
-//   2. In startFriendSimulation(), instead of setInterval(...), subscribe:
-//        supabase.channel('live-locations')
-//          .on('postgres_changes',
-//              { event: '*', schema: 'public', table: 'live_locations' },
-//              ({ new: row }) => upsertFriendMarker(row.user_id, row.name,
-//                                                    row.color, row.lat, row.lng))
-//          .subscribe();
-//   3. In the share toggle handler, when isSharingLocation is true, start
-//      pushing your own {lat, lng} to that table; when false, stop and delete
-//      your row so no one can see you. `isSharingLocation` already gates this.
-//
-// The rest of the app (map, markers, pins) does not care where the coordinates
-// come from — it only needs {name, color, lat, lng} per friend.
+// None of this talks to a server. Each block below is labelled with the
+// Supabase table it will become. To go real you replace the four data
+// structures with query results and swap the timer in startFriendSimulation()
+// for a `live_locations` Realtime subscription — the render code is unchanged.
 // ============================================================================
 
-let isSharingLocation = false; // mirrors the toggle; real code reads this too
+let isSharingLocation = false; // mirrors YOUR toggle; real code reads this too
+let myGroup = null;            // the group you're currently in, or null
 
-// ----- MOCK START -----
-const MOCK_FRIENDS_LIVE = [
-  {
-    id: 'f1', name: 'Priya Nair', color: '#7FB7C4',
-    path: [[51.507, -0.093], [51.509, -0.086], [51.506, -0.080], [51.503, -0.089]],
-  },
-  {
-    id: 'f2', name: 'Sam Okafor', color: '#9BC7D1',
-    path: [[51.501, -0.100], [51.499, -0.092], [51.497, -0.101], [51.500, -0.110]],
-  },
-  {
-    id: 'f3', name: 'Diego Santos', color: '#6BA9B6',
-    path: [[51.512, -0.099], [51.514, -0.090], [51.511, -0.085], [51.509, -0.097]],
-  },
+// ----- MOCK: `profiles` table -----------------------------------------------
+// One row per person: identity + map-pin colour + leaderboard stats. Keyed by
+// user id so the other tables can reference people by id alone.
+const MOCK_PROFILES = {
+  me:      { id: 'me',      name: 'You',          color: '#E0A542', totalKm: 612.4,  trips: 27 },
+  u_sam:   { id: 'u_sam',   name: 'Sam Okafor',   color: '#9BC7D1', totalKm: 1520.8, trips: 61 },
+  u_priya: { id: 'u_priya', name: 'Priya Nair',   color: '#7FB7C4', totalKm: 980.2,  trips: 39 },
+  u_diego: { id: 'u_diego', name: 'Diego Santos', color: '#6BA9B6', totalKm: 760.0,  trips: 30 },
+  u_mia:   { id: 'u_mia',   name: 'Mia Chen',     color: '#B7D6DE', totalKm: 445.9,  trips: 22 },
+};
+
+// ----- MOCK: `live_locations` stream --------------------------------------
+// A preset loop of [lat, lng] waypoints per user, used to fake movement.
+// Real app: these coordinates arrive over Supabase Realtime instead.
+const MOCK_LIVE_PATHS = {
+  u_sam:   [[51.501, -0.100], [51.499, -0.092], [51.497, -0.101], [51.500, -0.110]],
+  u_priya: [[51.507, -0.093], [51.509, -0.086], [51.506, -0.080], [51.503, -0.089]],
+  u_diego: [[51.512, -0.099], [51.514, -0.090], [51.511, -0.085], [51.509, -0.097]],
+  u_mia:   [[51.508, -0.105], [51.505, -0.099], [51.503, -0.104], [51.506, -0.112]],
+};
+
+// ----- MOCK: `groups` table -----------------------------------------------
+// Keyed by group id. Ships with one pre-built group that any invite code will
+// join (see handleJoinGroup()). Groups you create get added here at runtime.
+const MOCK_GROUPS = {
+  g_apex: { id: 'g_apex', name: 'Apex Hunters', inviteCode: 'A7X4K2', createdBy: 'u_sam' },
+};
+
+// ----- MOCK: `group_members` join table ---------------------------------
+// One row per (group, user). `sharing` = that member is broadcasting their
+// live location to this group right now. Your own row is pushed/spliced as
+// you join and leave.
+const MOCK_GROUP_MEMBERS = [
+  { groupId: 'g_apex', userId: 'u_sam',   sharing: true  },
+  { groupId: 'g_apex', userId: 'u_priya', sharing: true  },
+  { groupId: 'g_apex', userId: 'u_diego', sharing: false },
+  { groupId: 'g_apex', userId: 'u_mia',   sharing: false },
 ];
+// ----- END MOCK data ------------------------------------------------------------
+
+// Six visually-unambiguous characters (no 0/O/1/I) — e.g. "X7K2P9".
+function generateInviteCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
+
+// group_members rows for one group, resolved against MOCK_PROFILES.
+// Returns [{ profile, sharing, isMe }]; skips any member with no profile row.
+function groupMembers(groupId) {
+  return MOCK_GROUP_MEMBERS
+    .filter((m) => m.groupId === groupId)
+    .map((m) => ({
+      profile: MOCK_PROFILES[m.userId],
+      sharing: m.sharing,
+      isMe: m.userId === 'me',
+    }))
+    .filter((m) => m.profile);
+}
+
+// --- Live friend markers on the map (PART 4) -------------------------------
+// A moving marker is shown ONLY for group members (not you) whose `sharing`
+// is true. Members who are off get no marker at all — a greyed-out pin would
+// leak "this person exists but is hiding", which defeats the off switch.
 
 let friendTimerId = null;
+const friendSim = {}; // userId -> { marker, path, t }
 
-// Move every friend a little further along their loop and update their marker.
-// `_t` counts path segments; the fractional part slides between two waypoints.
+// The people who should currently have a marker.
+function visibleGroupMembers() {
+  if (!myGroup) return [];
+  return groupMembers(myGroup.id)
+    .filter((m) => !m.isMe && m.sharing && MOCK_LIVE_PATHS[m.profile.id])
+    .map((m) => m.profile);
+}
+
+// Rebuild all friend markers from scratch. Safe to call whenever the group or
+// a member's sharing state changes; a no-op until the map has been created.
+function rebuildFriendMarkers() {
+  if (!friendLayer) return;
+
+  friendLayer.clearLayers();
+  for (const key of Object.keys(friendSim)) delete friendSim[key];
+
+  visibleGroupMembers().forEach((profile) => {
+    const path = MOCK_LIVE_PATHS[profile.id];
+    const marker = L.marker(path[0], {
+      icon: makePin(profile.name, profile.color),
+    }).addTo(friendLayer);
+    friendSim[profile.id] = { marker, path, t: 0 };
+  });
+}
+
+// Nudge every visible friend further along their loop. `t` counts path
+// segments; its fractional part slides between two waypoints.
 function stepFriendSimulation() {
-  MOCK_FRIENDS_LIVE.forEach((friend) => {
-    const count = friend.path.length;
-    friend._t = (friend._t ?? 0) + 0.25;
+  Object.values(friendSim).forEach((entry) => {
+    const count = entry.path.length;
+    entry.t += 0.25;
 
-    const seg = Math.floor(friend._t) % count;
-    const frac = friend._t - Math.floor(friend._t);
-    const [aLat, aLng] = friend.path[seg];
-    const [bLat, bLng] = friend.path[(seg + 1) % count];
+    const seg = Math.floor(entry.t) % count;
+    const frac = entry.t - Math.floor(entry.t);
+    const [aLat, aLng] = entry.path[seg];
+    const [bLat, bLng] = entry.path[(seg + 1) % count];
 
-    const lat = aLat + (bLat - aLat) * frac;
-    const lng = aLng + (bLng - aLng) * frac;
-    friend._marker.setLatLng([lat, lng]);
+    entry.marker.setLatLng([aLat + (bLat - aLat) * frac, aLng + (bLng - aLng) * frac]);
   });
 }
 
 function startFriendSimulation() {
-  MOCK_FRIENDS_LIVE.forEach((friend) => {
-    friend._t = 0;
-    friend._marker = L.marker(friend.path[0], {
-      icon: makePin(friend.name, friend.color),
-    }).addTo(friendLayer);
-  });
-
+  rebuildFriendMarkers();
   friendTimerId = setInterval(stepFriendSimulation, 2000);
 }
-// ----- MOCK END -----
 
-// --- Share my live location toggle (PART 2) --------------------------------
-// Default OFF. In this mock, "sharing" just shows a blue "You" marker on the
-// map and flips the indicator; with a real backend this is also the switch
-// that starts/stops publishing your coordinates to other people.
+// --- Group view: setup screen + in-group screen ---------------------------
+
+function renderGroup() {
+  if (myGroup) {
+    renderGroupHome();
+  } else {
+    renderGroupSetup();
+  }
+}
+
+// No group yet — offer Create or Join.
+function renderGroupSetup() {
+  groupBodyEl.innerHTML = `
+    <div class="panel">
+      <h3 class="panel__title">Create a Group</h3>
+      <p class="panel__hint">Start a group and get an invite code to share with friends.</p>
+      <input class="field" id="createName" type="text" placeholder="Group name" maxlength="30" autocomplete="off">
+      <button class="btn btn--start btn--block" id="createBtn" type="button">Create Group</button>
+    </div>
+    <div class="panel">
+      <h3 class="panel__title">Join a Group</h3>
+      <p class="panel__hint">Enter a 6-character invite code from a friend.</p>
+      <input class="field field--code" id="joinCode" type="text" placeholder="X7K2P9" maxlength="6" autocomplete="off">
+      <button class="btn btn--ghost btn--block" id="joinBtn" type="button">Join Group</button>
+    </div>`;
+
+  groupBodyEl.querySelector('#createBtn').addEventListener('click', handleCreateGroup);
+  groupBodyEl.querySelector('#joinBtn').addEventListener('click', handleJoinGroup);
+}
+
+// In a group — name, invite code, member list, leave.
+function renderGroupHome() {
+  const members = groupMembers(myGroup.id);
+
+  groupBodyEl.innerHTML = `
+    <div class="group__header">
+      <h3 class="group__name">${myGroup.name}</h3>
+      <div class="group__code-row">
+        <span class="group__code-label">Invite code</span>
+        <span class="group__code">${myGroup.inviteCode}</span>
+        <button class="btn btn--ghost btn--sm" id="copyCodeBtn" type="button">Copy code</button>
+      </div>
+    </div>
+
+    <h4 class="group__section-title">Members &middot; ${members.length}</h4>
+    <div class="leaderboard__list">
+      ${members.map(renderMemberRow).join('')}
+    </div>
+
+    <button class="btn btn--stop btn--block" id="leaveBtn" type="button" style="margin-top: 14px;">Leave Group</button>`;
+
+  groupBodyEl.querySelector('#copyCodeBtn').addEventListener('click', handleCopyCode);
+  groupBodyEl.querySelector('#leaveBtn').addEventListener('click', handleLeaveGroup);
+}
+
+// One member row — reuses the leaderboard's .friend styling for consistency.
+function renderMemberRow({ profile, sharing, isMe }) {
+  return `
+    <div class="friend">
+      <div class="friend__body">
+        <span class="friend__name">${profile.name}${isMe ? ' <span class="tag">You</span>' : ''}</span>
+        <div class="friend__stats">
+          <span><strong>${profile.totalKm.toFixed(1)}</strong> km total</span>
+          <span><strong>${profile.trips}</strong> trips</span>
+        </div>
+      </div>
+      <span class="live-pill ${sharing ? 'live-pill--on' : 'live-pill--off'}">${sharing ? 'Sharing live' : 'Location off'}</span>
+    </div>`;
+}
+
+// --- Group actions ----------------------------------------------------------
+
+function handleCreateGroup() {
+  const name = (groupBodyEl.querySelector('#createName').value || '').trim() || 'My Group';
+  const group = {
+    id: 'g_' + generateInviteCode().toLowerCase(),
+    name,
+    inviteCode: generateInviteCode(),
+    createdBy: 'me',
+  };
+  MOCK_GROUPS[group.id] = group;
+  MOCK_GROUP_MEMBERS.push({ groupId: group.id, userId: 'me', sharing: false });
+  myGroup = group;
+  onGroupChanged();
+}
+
+function handleJoinGroup() {
+  // Mock: any code joins the one pre-built group. A real app would look the
+  // group up by invite_code and show an error when nothing matched.
+  const group = MOCK_GROUPS.g_apex;
+  const alreadyIn = MOCK_GROUP_MEMBERS.some(
+    (m) => m.groupId === group.id && m.userId === 'me'
+  );
+  if (!alreadyIn) {
+    MOCK_GROUP_MEMBERS.push({ groupId: group.id, userId: 'me', sharing: false });
+  }
+  myGroup = group;
+  onGroupChanged();
+}
+
+function handleLeaveGroup() {
+  const i = MOCK_GROUP_MEMBERS.findIndex(
+    (m) => m.groupId === myGroup.id && m.userId === 'me'
+  );
+  if (i !== -1) MOCK_GROUP_MEMBERS.splice(i, 1);
+  myGroup = null;
+  shareToggleEl.checked = false; // leaving a group also stops your sharing
+  onGroupChanged();
+}
+
+function handleCopyCode() {
+  const btn = groupBodyEl.querySelector('#copyCodeBtn');
+  copyText(myGroup.inviteCode).then((ok) => {
+    btn.textContent = ok ? 'Copied' : 'Press ⌘C';
+    setTimeout(() => { btn.textContent = 'Copy code'; }, 1500);
+  });
+}
+
+// Clipboard write with a fallback for insecure (file://) contexts.
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true, () => fallbackCopy(text));
+  }
+  return Promise.resolve(fallbackCopy(text));
+}
+
+function fallbackCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Re-sync everything that depends on which group you're in.
+function onGroupChanged() {
+  renderGroup();          // the Group tab
+  rebuildFriendMarkers(); // the map's live markers (no-op until the map exists)
+  syncShareToggleEnabled();
+  applyShareState();      // the share panel copy + your own "You" marker
+}
+
+// Your share toggle only makes sense inside a group.
+function syncShareToggleEnabled() {
+  shareToggleEl.disabled = !myGroup;
+  if (!myGroup) shareToggleEl.checked = false;
+}
+
+// --- Share my live location toggle (PART 5) --------------------------------
+// Default OFF, and it's scoped to YOUR CURRENT GROUP — not the whole app.
+// In this mock, "sharing" shows the amber "You" marker on the map and updates
+// the status line; with a real backend this same switch starts/stops writing
+// your coordinates to the group's live_locations rows.
 
 function applyShareState() {
-  isSharingLocation = shareToggleEl.checked;
+  isSharingLocation = shareToggleEl.checked && !!myGroup;
 
-  shareStatusEl.textContent = isSharingLocation ? 'Sharing live' : 'Not sharing';
-  shareStatusEl.className =
-    'share__status ' + (isSharingLocation ? 'share__status--on' : 'share__status--off');
+  if (!myGroup) {
+    shareStatusEl.textContent = 'Join a group to share your location';
+    shareStatusEl.className = 'share__status share__status--off';
+  } else {
+    shareStatusEl.textContent = isSharingLocation
+      ? `Sharing live with ${myGroup.name}`
+      : `Not sharing with ${myGroup.name}`;
+    shareStatusEl.className =
+      'share__status ' + (isSharingLocation ? 'share__status--on' : 'share__status--off');
+  }
 
   updateMeMarker();
 }
@@ -430,7 +656,12 @@ function updateMeMarker() {
 }
 
 shareToggleEl.addEventListener('change', applyShareState);
-applyShareState(); // set the "Not sharing" indicator on load
+
+// Initial state: you're not in a group yet, so render the Create/Join screen
+// and disable the group-scoped share toggle until you join one.
+syncShareToggleEnabled();
+renderGroup();
+applyShareState();
 
 // --- Buttons -----------------------------------------------------------
 
