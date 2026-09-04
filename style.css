@@ -1,0 +1,484 @@
+/* Drive Tracker — motorsport telemetry / instrument-cluster styling */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg: #16181C;          /* deep graphite, not pure black */
+  --card: #1E2126;        /* card / surface */
+  --border: #2C3038;      /* 1px hairline border — no shadows anywhere */
+  --raised: #262A31;      /* slightly lifted surface: active segment */
+
+  /* Accents */
+  --accent: #E0A542;      /* amber-gold: tachometer needle; also = positive */
+  --accent-dim: rgba(224, 165, 66, 0.14);
+  --secondary: #5B9AA8;   /* cool blue-grey: secondary data / links */
+  --secondary-dim: rgba(91, 154, 168, 0.14);
+  --danger: #D0453B;      /* stop / error only — never used to mean "success" */
+  --danger-dim: rgba(208, 69, 59, 0.14);
+
+  /* Text */
+  --text: #EDEDEA;
+  --muted: #8A8F98;
+
+  --radius: 10px;
+  --radius-pill: 999px;
+
+  /* Type: clean technical sans for UI, tabular mono for the hero numbers */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-num: "SF Mono", "JetBrains Mono", "Roboto Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  min-height: 100vh;
+}
+
+/* Header */
+.app__header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.app__title {
+  font-size: 1.5rem;
+  font-weight: 650;
+  margin: 0 0 12px;
+  letter-spacing: -0.01em;
+}
+
+/* Status indicator */
+.status {
+  display: inline-block;
+  padding: 6px 16px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.status--idle     { background: var(--card);          color: var(--muted); }
+.status--tracking { background: var(--accent-dim);    color: var(--accent);    border-color: var(--accent); }
+.status--done     { background: var(--secondary-dim); color: var(--secondary); border-color: var(--secondary); }
+.status--error    { background: var(--danger-dim);    color: var(--danger);    border-color: var(--danger); }
+
+/* One-time "ignition" pulse on the status indicator when a trip starts */
+@keyframes ignition {
+  0%   { box-shadow: 0 0 0 0 rgba(224, 165, 66, 0.55); }
+  70%  { box-shadow: 0 0 0 16px rgba(224, 165, 66, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(224, 165, 66, 0); }
+}
+
+.status--ignite {
+  animation: ignition 750ms ease-out 1;
+}
+
+/* Tab switcher — segmented control, like a car infotainment system */
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 20px;
+  padding: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+}
+
+.tab {
+  flex: 1;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 550;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.tab:hover:not(.tab--active) {
+  color: var(--text);
+}
+
+.tab--active {
+  background: var(--raised);
+  border-color: var(--border);
+  color: var(--accent);
+}
+
+/* View crossfade (the only tab-switch motion) */
+.view {
+  transition: opacity 0.16s ease;
+}
+
+.view--exit,
+.view--enter {
+  opacity: 0;
+}
+
+/* Stat grid */
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.stat {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 18px;
+  text-align: left;
+}
+
+/* Hero stat — trip distance, the headline number of the app */
+.stat--hero {
+  grid-column: 1 / -1;
+  padding: 26px 22px;
+}
+
+.stat__value {
+  display: block;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+
+.stat--hero .stat__value {
+  font-size: 3.4rem;
+}
+
+.stat__label {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Leaderboard */
+.leaderboard__title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0 0 12px;
+  color: var(--text);
+}
+
+.leaderboard__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.friend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.friend--p1 {
+  border-color: var(--accent);
+}
+
+/* Motorsport-style position badge: P1, P2, P3 … */
+.pos-badge {
+  flex: none;
+  min-width: 36px;
+  padding: 3px 8px;
+  text-align: center;
+  font-family: var(--font-num);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.pos-badge--p1 {
+  color: #16181C;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.friend__body {
+  flex: 1;
+}
+
+.friend__name {
+  display: block;
+  font-size: 1.02rem;
+  font-weight: 600;
+}
+
+.friend__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 14px;
+  margin-top: 3px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.friend__stats strong {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Controls */
+.controls {
+  display: flex;
+  gap: 10px;
+}
+
+.btn {
+  flex: 1;
+  font-family: inherit;
+  font-size: 0.98rem;
+  font-weight: 600;
+  padding: 14px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.btn--start {
+  background: var(--accent);
+  color: #16181C;
+}
+
+.btn--start:hover:not(:disabled) {
+  background: #EEB65B;
+}
+
+.btn--stop {
+  background: transparent;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn--stop:hover:not(:disabled) {
+  background: var(--danger-dim);
+}
+
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Hint text */
+.hint {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-top: 16px;
+}
+
+/* Map */
+#map {
+  height: 360px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  z-index: 0;
+}
+
+.leaflet-container {
+  font: inherit;
+  background: var(--bg);
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+
+.leaflet-container a.leaflet-popup-close-button {
+  color: var(--muted);
+}
+
+/* Friend / "You" markers (Leaflet divIcon) */
+.map-pin-wrap {
+  background: transparent;
+  border: 0;
+}
+
+.map-pin {
+  position: relative;
+  display: block;
+  width: 34px;
+  height: 34px;
+}
+
+.map-pin__dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--pin);
+  color: #16181C;
+  font-family: var(--font-num);
+  font-size: 0.76rem;
+  font-weight: 700;
+  border: 2px solid var(--bg);
+}
+
+.map-pin__label {
+  position: absolute;
+  top: 38px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* "Share my live location" toggle */
+.share {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.share__text {
+  flex: 1;
+}
+
+.share__title {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.share__status {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.share__status--off {
+  color: var(--muted);
+}
+
+.share__status--on {
+  color: var(--accent);
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 46px;
+  height: 26px;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch__slider {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  background: var(--border);
+  border-radius: var(--radius-pill);
+  transition: background-color 0.15s ease;
+}
+
+.switch__slider::before {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  left: 3px;
+  top: 3px;
+  background: var(--text);
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+}
+
+.switch input:checked + .switch__slider {
+  background: var(--accent);
+}
+
+.switch input:checked + .switch__slider::before {
+  transform: translateX(20px);
+  background: #16181C;
+}
+
+/* Map legend */
+.legend {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}

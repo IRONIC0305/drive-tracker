@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Drive Tracker</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="app__header">
+      <h1 class="app__title">Drive Tracker</h1>
+      <p id="status" class="status status--idle">Not tracking</p>
+    </header>
+
+    <nav class="tabs" aria-label="Views">
+      <button id="tabTracker" class="tab tab--active" type="button">Tracker</button>
+      <button id="tabLeaderboard" class="tab" type="button">Leaderboard</button>
+      <button id="tabMap" class="tab" type="button">Map</button>
+    </nav>
+
+    <!-- ============ Tracker view ============ -->
+    <section id="trackerView" class="view">
+      <section class="stats" aria-label="Trip statistics">
+        <div class="stat stat--hero">
+          <span class="stat__value" id="distance">0.00</span>
+          <span class="stat__label">Distance (km)</span>
+        </div>
+        <div class="stat">
+          <span class="stat__value" id="duration">0:00</span>
+          <span class="stat__label">Duration</span>
+        </div>
+        <div class="stat">
+          <span class="stat__value" id="avgSpeed">0.0</span>
+          <span class="stat__label">Avg speed (km/h)</span>
+        </div>
+        <div class="stat">
+          <span class="stat__value" id="curSpeed">0.0</span>
+          <span class="stat__label">Current speed (km/h)</span>
+        </div>
+        <div class="stat">
+          <span class="stat__value" id="topSpeed">0.0</span>
+          <span class="stat__label">Top speed (km/h)</span>
+        </div>
+        <div class="stat">
+          <span class="stat__value" id="points">0</span>
+          <span class="stat__label">GPS points</span>
+        </div>
+      </section>
+
+      <div class="controls">
+        <button id="startBtn" class="btn btn--start" type="button">Start Trip</button>
+        <button id="stopBtn" class="btn btn--stop" type="button" disabled>Stop Trip</button>
+      </div>
+
+      <p class="hint" id="hint">Tip: allow location access when your browser asks. Works best on a phone.</p>
+    </section>
+
+    <!-- ============ Leaderboard view ============ -->
+    <section id="leaderboardView" class="view" hidden>
+      <h2 class="leaderboard__title">Distance Leaderboard</h2>
+      <div class="leaderboard__list" id="leaderboardList"></div>
+      <p class="hint">Sample data for now — ranked by total distance driven.</p>
+    </section>
+
+    <!-- ============ Map view ============ -->
+    <section id="mapView" class="view" hidden>
+      <div class="share">
+        <div class="share__text">
+          <div class="share__title">Share my live location</div>
+          <div class="share__status share__status--off" id="shareStatus">Not sharing</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="shareToggle">
+          <span class="switch__slider"></span>
+        </label>
+      </div>
+
+      <div id="map"></div>
+
+      <ul class="legend">
+        <li><span class="legend__dot" style="background:#E0A542"></span>You / route / start</li>
+        <li><span class="legend__dot" style="background:#EDEDEA"></span>Trip finish</li>
+        <li><span class="legend__dot" style="background:#5B9AA8"></span>Friends (simulated)</li>
+      </ul>
+
+      <p class="hint">Friend movement is simulated sample data. Your route appears here after you stop a trip.</p>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
