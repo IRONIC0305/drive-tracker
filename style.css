@@ -26,7 +26,9 @@
 
   /* Type: clean technical sans for UI, tabular mono for the hero numbers */
   --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-num: "SF Mono", "JetBrains Mono", "Roboto Mono", ui-monospace, Menlo, Consolas, monospace;
+  /* ui-monospace first so macOS resolves it to SF Mono reliably; the final
+     `monospace` keyword guarantees a fixed-width fallback everywhere. */
+  --font-num: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, "Roboto Mono", "JetBrains Mono", Consolas, monospace;
 }
 
 * {
@@ -59,8 +61,30 @@ body {
 
 /* Header */
 .app__header {
+  position: relative;
   text-align: center;
   margin-bottom: 20px;
+}
+
+.app__logout {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-family: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.app__logout:hover {
+  color: var(--text);
+  border-color: var(--muted);
 }
 
 .app__title {
@@ -162,21 +186,25 @@ body {
 /* Hero stat — trip distance, the headline number of the app */
 .stat--hero {
   grid-column: 1 / -1;
-  padding: 26px 22px;
+  padding: 28px 22px;
 }
 
 .stat__value {
   display: block;
   font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
-  font-size: 2rem;
+  font-feature-settings: "tnum" 1; /* belt-and-suspenders for older engines */
+  font-size: 1.55rem;              /* secondary stats */
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: normal;          /* mono needs no tracking; keeps digits even */
   line-height: 1.1;
+  color: var(--text);
 }
 
+/* Distance: the true hero — >2x the secondary numbers, lands first */
 .stat--hero .stat__value {
-  font-size: 3.4rem;
+  font-size: 4rem;
+  font-weight: 700;
 }
 
 .stat__label {
@@ -185,6 +213,36 @@ body {
   font-size: 0.82rem;
   font-weight: 500;
   color: var(--muted);
+}
+
+/* Small caption under the hero number (GPS point count) */
+.stat__note {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Stat roles ------------------------------------------------------------- */
+
+/* Context stats (Duration, Avg speed): secondary blue-grey numbers */
+.stat--context .stat__value {
+  color: var(--secondary);
+}
+
+/* Live stats (Current speed, Top speed): stay white */
+.stat--live .stat__value {
+  color: var(--text);
+}
+
+/* Top speed is a personal-best-style stat: subtle amber accent */
+.stat--pb {
+  border-color: var(--accent);
+}
+
+.stat--pb .stat__label {
+  color: var(--accent);
 }
 
 /* Leaderboard */
@@ -309,6 +367,55 @@ body {
   font-size: 0.82rem;
   color: var(--muted);
   margin-top: 16px;
+}
+
+/* Trip History (real data — Supabase `trips` table) */
+.trip-history {
+  margin-top: 24px;
+}
+
+.trip-history__title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0 0 12px;
+  color: var(--text);
+}
+
+.trip-history__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+}
+
+.trip-row__date {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.trip-row__stats {
+  display: flex;
+  gap: 14px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.trip-row__stats strong {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
 }
 
 /* Map */
@@ -643,4 +750,74 @@ body {
 .btn--block {
   display: block;
   width: 100%;
+}
+
+.btn--block + .btn--block {
+  margin-top: 8px;
+}
+
+/* ============ Auth screen ============ */
+
+.auth {
+  margin-top: 8px;
+}
+
+.auth__title {
+  font-size: 1.2rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin: 0 0 4px;
+}
+
+.auth__sub {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0 0 16px;
+}
+
+.auth__error {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--danger);
+  background: var(--danger-dim);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0 0 10px;
+}
+
+/* Neutral tone — e.g. "check your email to confirm" */
+.auth__error--info {
+  color: var(--secondary);
+  background: var(--secondary-dim);
+  border-color: var(--secondary);
+}
+
+.auth__toggle {
+  margin: 14px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Text button styled as an inline link (mode toggle) */
+.linkbtn {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  color: var(--secondary);
+  background: none;
+  border: none;
+  padding: 0 0 0 4px;
+  cursor: pointer;
+}
+
+.linkbtn:hover {
+  text-decoration: underline;
+}
+
+.linkbtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
 }

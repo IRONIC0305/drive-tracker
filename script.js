@@ -1,5 +1,30 @@
 // Drive Tracker — trip tracking + live stats
 
+// ============================================================================
+// SUPABASE CONFIG  (the only real backend wiring so far)
+// ============================================================================
+// Login / signup is REAL (Supabase Auth, email + password). Everything else —
+// leaderboard, group, map friends — is still mock data (see the MOCK sections
+// further down). Wiring those to the database comes later.
+//
+// supabase-js v2 is loaded from a CDN <script> in index.html, which puts a
+// global `supabase` object on the page. createClient(projectUrl, key) — the
+// key is Supabase's new "publishable key", which replaces what used to be
+// called the "anon" key. It goes in exactly the same place.
+//
+// Find both values in the Supabase dashboard: Project Settings -> API Keys.
+//   - Project URL           -> SUPABASE_URL below
+//   - "Publishable key"      -> SUPABASE_PUBLISHABLE_KEY below
+//                               (it starts with  sb_publishable_...)
+//
+// SECURITY: never put the *secret* key (starts with sb_secret_, formerly the
+// service_role key) in this file. It bypasses row-level security and this
+// file is served to the browser and committed to git.
+const SUPABASE_URL = 'https://jacsheofjgaysemerfln.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_AqA40yERnQIfhGnJvebYzQ_A91uk-9X';
+
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
 // --- Leaderboard data ---------------------------------------------------------
 // Hardcoded sample data standing in for a future database query. When a real
 // backend exists, replace this array with whatever the query returns, e.g.
@@ -24,6 +49,7 @@ let tripPoints = [];
 let startTime = null;
 let timerId = null;
 let topSpeed = 0; // highest km/h seen so far this trip
+let currentUserId = null; // set by onAuthStateChange / getSession, cleared on logout
 
 // Grab the elements we update
 const startBtn = document.getElementById('startBtn');
@@ -35,6 +61,9 @@ const avgSpeedEl = document.getElementById('avgSpeed');
 const curSpeedEl = document.getElementById('curSpeed');
 const topSpeedEl = document.getElementById('topSpeed');
 const pointsEl = document.getElementById('points');
+const saveErrorEl = document.getElementById('saveError');
+const tripHistoryListEl = document.getElementById('tripHistoryList');
+const tripHistoryErrorEl = document.getElementById('tripHistoryError');
 
 // View switching + leaderboard + map + group
 const tabTrackerEl = document.getElementById('tabTracker');
@@ -155,6 +184,95 @@ function currentSpeedKmh(position) {
   const km = calculateDistance(a.lat, a.lng, b.lat, b.lng);
   const hours = (b.timestamp - a.timestamp) / 1000 / 3600;
   return hours > 0 ? km / hours : 0;
+}
+
+// --- Trip History (real — Supabase `trips` table) --------------------------
+
+function showSaveError(text) {
+  saveErrorEl.textContent = text;
+  saveErrorEl.hidden = false;
+}
+
+function hideSaveError() {
+  saveErrorEl.hidden = true;
+  saveErrorEl.textContent = '';
+}
+
+function showTripHistoryError(text) {
+  tripHistoryErrorEl.textContent = text;
+  tripHistoryErrorEl.hidden = false;
+}
+
+function hideTripHistoryError() {
+  tripHistoryErrorEl.hidden = true;
+  tripHistoryErrorEl.textContent = '';
+}
+
+// Insert the just-finished trip as a row in `trips`, then refresh the list.
+async function saveTrip(stats) {
+  if (!currentUserId) return;
+  hideSaveError();
+
+  const { error } = await supabaseClient.from('trips').insert({
+    user_id: currentUserId,
+    distance_km: parseFloat(stats.distanceKm),
+    duration_min: parseFloat(stats.durationMin),
+    avg_speed_kmh: parseFloat(stats.avgSpeedKmh),
+    top_speed_kmh: Number(topSpeed.toFixed(1)),
+  });
+
+  if (error) {
+    console.error('Trip save failed:', error);
+    showSaveError("Couldn't save this trip — " + (error.message || 'try again later') + '.');
+    return;
+  }
+
+  loadTripHistory();
+}
+
+// Pull the logged-in user's past trips, most recent first, and render them.
+async function loadTripHistory() {
+  if (!currentUserId) return;
+
+  hideTripHistoryError();
+  tripHistoryListEl.innerHTML = '<p class="hint">Loading…</p>';
+
+  const { data, error } = await supabaseClient
+    .from('trips')
+    .select('distance_km, top_speed_kmh, created_at')
+    .eq('user_id', currentUserId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Trip history load failed:', error);
+    tripHistoryListEl.innerHTML = '';
+    showTripHistoryError("Couldn't load trip history — " + (error.message || 'try again later') + '.');
+    return;
+  }
+
+  renderTripHistory(data || []);
+}
+
+function renderTripHistory(trips) {
+  if (trips.length === 0) {
+    tripHistoryListEl.innerHTML = '<p class="hint">No trips yet — start your first one!</p>';
+    return;
+  }
+
+  tripHistoryListEl.innerHTML = trips.map((trip) => {
+    const when = new Date(trip.created_at);
+    const dateStr = when.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const timeStr = when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+    return `
+      <div class="trip-row">
+        <span class="trip-row__date">${dateStr} &middot; ${timeStr}</span>
+        <span class="trip-row__stats">
+          <span><strong>${Number(trip.distance_km).toFixed(2)}</strong> km</span>
+          <span><strong>${Number(trip.top_speed_kmh).toFixed(1)}</strong> km/h top</span>
+        </span>
+      </div>`;
+  }).join('');
 }
 
 // --- Leaderboard ---------------------------------------------------------
@@ -729,6 +847,226 @@ stopBtn.addEventListener('click', () => {
   renderTripRoute();  // draw the path on the Map tab
   updateMeMarker();   // keep the "You" marker on the finish point if sharing
 
+  // Nothing worth logging for a trip with no real movement (e.g. an
+  // accidental start/stop before a single GPS fix came in).
+  if (tripPoints.length >= 2) {
+    saveTrip(stats);
+  }
+
   console.log('Full trip:', tripPoints);
   console.log('Stats:', stats);
 });
+
+// ============================================================================
+// AUTH  (real — Supabase email + password)
+// ----------------------------------------------------------------------------
+// Logged out  -> only #authView is shown; the whole app (#appView with the
+//                tabs + views) is hidden.
+// Logged in   -> #appView is shown and a "Log out" button appears in the
+//                header. onAuthStateChange() keeps the two in sync.
+// ============================================================================
+
+const authViewEl = document.getElementById('authView');
+const appViewEl = document.getElementById('appView');
+const logoutBtnEl = document.getElementById('logoutBtn');
+const authFormEl = document.getElementById('authForm');
+const authEmailEl = document.getElementById('authEmail');
+const authPasswordEl = document.getElementById('authPassword');
+const authErrorEl = document.getElementById('authError');
+const authTitleEl = document.getElementById('authTitle');
+const authSubEl = document.getElementById('authSub');
+const authLoginEl = document.getElementById('authLogin');
+const authSignupEl = document.getElementById('authSignup');
+const authToggleEl = document.getElementById('authToggle');
+const authToggleTextEl = document.getElementById('authToggleText');
+
+let authMode = 'login';                 // 'login' | 'signup' — which button was pressed
+let submittingAuth = false;
+
+const KEY_LOOKS_UNSET =
+  !SUPABASE_PUBLISHABLE_KEY || SUPABASE_PUBLISHABLE_KEY.indexOf('PASTE_') === 0;
+
+// --- Screen switching -----------------------------------------------------
+
+function showAuthScreen() {
+  appViewEl.hidden = true;
+  logoutBtnEl.hidden = true;
+  statusEl.hidden = true;         // the "Not tracking" pill belongs to the app
+  authViewEl.hidden = false;
+}
+
+function showAppScreen() {
+  authViewEl.hidden = true;
+  appViewEl.hidden = false;
+  logoutBtnEl.hidden = false;
+  statusEl.hidden = false;
+}
+
+// --- Form copy + the login/signup toggle --------------------------------
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const isLogin = mode === 'login';
+
+  authTitleEl.textContent = isLogin ? 'Log in' : 'Sign up';
+  authSubEl.textContent = isLogin
+    ? 'Sign in to your driving log.'
+    : 'Create an account to start logging drives.';
+  authToggleTextEl.textContent = isLogin
+    ? "Don't have an account?"
+    : 'Already have an account?';
+  authToggleEl.textContent = isLogin ? 'Sign up' : 'Log in';
+
+  // Emphasise (amber) whichever button matches the current mode.
+  authLoginEl.className = 'btn btn--block ' + (isLogin ? 'btn--start' : 'btn--ghost');
+  authSignupEl.className = 'btn btn--block ' + (isLogin ? 'btn--ghost' : 'btn--start');
+
+  authPasswordEl.setAttribute('autocomplete', isLogin ? 'current-password' : 'new-password');
+  hideAuthMessage();
+}
+
+// --- Message area near the form ----------------------------------------
+
+function showAuthMessage(text, tone) {
+  authErrorEl.textContent = text;
+  authErrorEl.className = 'auth__error' + (tone === 'info' ? ' auth__error--info' : '');
+  authErrorEl.hidden = false;
+}
+
+function hideAuthMessage() {
+  authErrorEl.hidden = true;
+  authErrorEl.textContent = '';
+  authErrorEl.className = 'auth__error';
+}
+
+// Map Supabase's raw error text to something a person can act on.
+function friendlyAuthError(error) {
+  const msg = (error && error.message ? error.message : '').toLowerCase();
+
+  if (msg.includes('already registered') || msg.includes('already been registered') ||
+      msg.includes('user already exists')) {
+    return 'That email is already in use — try logging in instead.';
+  }
+  if (msg.includes('invalid login credentials')) {
+    return 'Wrong email or password.';
+  }
+  if (msg.includes('email not confirmed')) {
+    return 'Confirm your email first — check your inbox for the link.';
+  }
+  if (msg.includes('password should be at least')) {
+    return 'Password is too short (minimum 6 characters).';
+  }
+  if (msg.includes('unable to validate email address') || msg.includes('invalid format')) {
+    return "That doesn't look like a valid email address.";
+  }
+  if (msg.includes('for security purposes') || msg.includes('rate limit')) {
+    return 'Too many attempts — wait a minute and try again.';
+  }
+  return (error && error.message) || 'Something went wrong. Try again.';
+}
+
+// --- Submit (shared by the Log In and Sign Up buttons) ------------------
+
+async function submitAuth() {
+  if (submittingAuth) return;
+
+  const email = authEmailEl.value.trim();
+  const password = authPasswordEl.value;
+
+  hideAuthMessage();
+
+  if (!email || !password) {
+    showAuthMessage('Enter your email and password.');
+    return;
+  }
+  if (password.length < 6) {
+    showAuthMessage('Password must be at least 6 characters.');
+    return;
+  }
+  if (KEY_LOOKS_UNSET) {
+    showAuthMessage('Add your Supabase publishable key in script.js first.');
+    return;
+  }
+
+  submittingAuth = true;
+  authLoginEl.disabled = true;
+  authSignupEl.disabled = true;
+
+  try {
+    const { data, error } =
+      authMode === 'signup'
+        ? await supabaseClient.auth.signUp({ email, password })
+        : await supabaseClient.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      showAuthMessage(friendlyAuthError(error));
+      return;
+    }
+
+    // Signup with "Confirm email" ON returns no session — the user must click
+    // the emailed link before they can log in.
+    if (authMode === 'signup' && !data.session) {
+      setAuthMode('login');
+      showAuthMessage('Account created. Check your email to confirm, then log in.', 'info');
+      return;
+    }
+
+    // Success with a session: onAuthStateChange() will swap to the app.
+  } catch (err) {
+    showAuthMessage('Network error — could not reach Supabase.');
+  } finally {
+    submittingAuth = false;
+    authLoginEl.disabled = false;
+    authSignupEl.disabled = false;
+  }
+}
+
+// --- Wiring ------------------------------------------------------------------
+
+authLoginEl.addEventListener('click', () => { authMode = 'login'; });
+authSignupEl.addEventListener('click', () => { authMode = 'signup'; });
+
+authFormEl.addEventListener('submit', (e) => {
+  e.preventDefault();
+  submitAuth();
+});
+
+authToggleEl.addEventListener('click', () => {
+  setAuthMode(authMode === 'login' ? 'signup' : 'login');
+});
+
+logoutBtnEl.addEventListener('click', async () => {
+  await supabaseClient.auth.signOut(); // onAuthStateChange() handles the UI
+});
+
+async function initAuth() {
+  setAuthMode('login');
+
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (session) {
+    currentUserId = session.user.id;
+    showAppScreen();
+    loadTripHistory();
+  } else {
+    showAuthScreen();
+    if (KEY_LOOKS_UNSET) {
+      showAuthMessage('Add your Supabase publishable key in script.js to enable login.', 'info');
+    }
+  }
+
+  // Fires on login, logout, token refresh, and once on load.
+  supabaseClient.auth.onAuthStateChange((_event, session) => {
+    if (session) {
+      currentUserId = session.user.id;
+      hideAuthMessage();
+      authFormEl.reset();
+      showAppScreen();
+      loadTripHistory();
+    } else {
+      currentUserId = null;
+      showAuthScreen();
+    }
+  });
+}
+
+initAuth();
