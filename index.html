@@ -96,8 +96,13 @@
       <!-- ============ Leaderboard view ============ -->
       <section id="leaderboardView" class="view" hidden>
         <h2 class="leaderboard__title">Distance Leaderboard</h2>
+        <div class="range-filter" id="leaderboardRange" role="group" aria-label="Time range">
+          <button class="range-filter__btn" data-range="week" type="button">This Week</button>
+          <button class="range-filter__btn" data-range="month" type="button">This Month</button>
+          <button class="range-filter__btn range-filter__btn--active" data-range="all" type="button">All Time</button>
+        </div>
         <div class="leaderboard__list" id="leaderboardList"></div>
-        <p class="hint">Sample data for now — ranked by total distance driven.</p>
+        <p class="hint">Sample data for now — ranked by total distance driven. Shorter ranges scale each entry's all-time stats down proportionally until this connects to real trip dates.</p>
       </section>
 
       <!-- ============ Map view ============ -->
@@ -113,7 +118,10 @@
           </label>
         </div>
 
-        <div id="map"></div>
+        <div class="map-wrap">
+          <div id="map"></div>
+          <p class="map-empty" id="mapEmptyState">Complete a trip to see your route here</p>
+        </div>
 
         <ul class="legend">
           <li><span class="legend__dot" style="background:#E0A542"></span>You / route / start</li>

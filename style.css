@@ -273,6 +273,21 @@ body {
   border-color: var(--accent);
 }
 
+/* Rank de-emphasis below P1: the pack visibly thins out going down the list.
+   P2/P3 get a slight boost above the baseline; P4+ fade slightly below it. */
+.friend--rank-upper .friend__name {
+  font-size: 1.08rem;
+  font-weight: 700;
+}
+
+.friend--rank-lower {
+  opacity: 0.82;
+}
+
+.friend--rank-lower .friend__name {
+  font-weight: 550;
+}
+
 /* Motorsport-style position badge: P1, P2, P3 … */
 .pos-badge {
   flex: none;
@@ -318,6 +333,43 @@ body {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   color: var(--text);
+}
+
+/* Leaderboard time-range filter — small segmented control, same visual
+   language as the main tab bar but scaled down */
+.range-filter {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  padding: 3px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+}
+
+.range-filter__btn {
+  flex: 1;
+  font-family: inherit;
+  font-size: 0.76rem;
+  font-weight: 550;
+  white-space: nowrap;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.range-filter__btn:hover:not(.range-filter__btn--active) {
+  color: var(--text);
+}
+
+.range-filter__btn--active {
+  background: var(--raised);
+  border-color: var(--border);
+  color: var(--accent);
 }
 
 /* Controls */
@@ -419,11 +471,35 @@ body {
 }
 
 /* Map */
+.map-wrap {
+  position: relative;
+}
+
 #map {
   height: 360px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   z-index: 0;
+}
+
+/* Empty state: no saved trips yet, shown as a caption card over the map */
+.map-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  max-width: 78%;
+  margin: 0;
+  padding: 10px 16px;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 550;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  pointer-events: none;
 }
 
 .leaflet-container {

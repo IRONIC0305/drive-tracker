@@ -76,8 +76,10 @@ const mapViewEl = document.getElementById('mapView');
 const groupViewEl = document.getElementById('groupView');
 const groupBodyEl = document.getElementById('groupBody');
 const leaderboardListEl = document.getElementById('leaderboardList');
+const leaderboardRangeEl = document.getElementById('leaderboardRange');
 const shareToggleEl = document.getElementById('shareToggle');
 const shareStatusEl = document.getElementById('shareStatus');
+const mapEmptyStateEl = document.getElementById('mapEmptyState');
 
 // --- Math helpers -----------------------------------------------------------
 
@@ -208,6 +210,15 @@ function hideTripHistoryError() {
   tripHistoryErrorEl.textContent = '';
 }
 
+// Whether the logged-in user has ever completed a trip — drives the Map
+// tab's empty state. Starts true (empty state hidden) so nothing flashes
+// before the first history load resolves; set for real once it does.
+let hasSavedTrips = true;
+
+function updateMapEmptyState() {
+  mapEmptyStateEl.hidden = hasSavedTrips;
+}
+
 // Insert the just-finished trip as a row in `trips`, then refresh the list.
 async function saveTrip(stats) {
   if (!currentUserId) return;
@@ -250,6 +261,8 @@ async function loadTripHistory() {
     return;
   }
 
+  hasSavedTrips = (data || []).length > 0;
+  updateMapEmptyState();
   renderTripHistory(data || []);
 }
 
@@ -277,20 +290,46 @@ function renderTripHistory(trips) {
 
 // --- Leaderboard ---------------------------------------------------------
 
-// Build the ranked leaderboard rows from LEADERBOARD_DATA.
+// Time-range filter: no real trip dates yet, so shorter ranges just scale
+// each entry's all-time stats down as if activity were spread evenly across
+// a year. Real date-based filtering replaces this once trips carry dates.
+const RANGE_SCALE = { week: 1 / 52, month: 1 / 12, all: 1 };
+let leaderboardRange = 'all';
+
+// Scale LEADERBOARD_DATA down for the given range. longestKm is clamped to
+// the scaled total so a single "longest trip" never exceeds the range total.
+function scaledLeaderboardData(range) {
+  const scale = RANGE_SCALE[range];
+  if (scale === 1) return LEADERBOARD_DATA;
+
+  return LEADERBOARD_DATA.map((friend) => {
+    const totalKm = friend.totalKm * scale;
+    return {
+      ...friend,
+      totalKm,
+      trips: Math.round(friend.trips * scale),
+      longestKm: Math.min(friend.longestKm, totalKm),
+    };
+  });
+}
+
+// Build the ranked leaderboard rows for the current time range.
 function renderLeaderboard() {
   // Copy first (slice) so we never reorder the original data, then sort by
   // total distance, biggest first.
-  const ranked = LEADERBOARD_DATA
+  const ranked = scaledLeaderboardData(leaderboardRange)
     .slice()
     .sort((a, b) => b.totalKm - a.totalKm);
 
   leaderboardListEl.innerHTML = ranked.map((friend, index) => {
     const position = index + 1;          // P1, P2, P3 …
     const isP1 = position === 1;
+    // The pack visibly thins out below P1: P2/P3 get a slight boost,
+    // P4+ fade slightly — P1's own styling is untouched.
+    const tierClass = isP1 ? '' : position <= 3 ? ' friend--rank-upper' : ' friend--rank-lower';
 
     return `
-      <div class="friend${isP1 ? ' friend--p1' : ''}">
+      <div class="friend${isP1 ? ' friend--p1' : ''}${tierClass}">
         <span class="pos-badge${isP1 ? ' pos-badge--p1' : ''}">P${position}</span>
         <div class="friend__body">
           <span class="friend__name">${friend.name}</span>
@@ -303,6 +342,22 @@ function renderLeaderboard() {
       </div>`;
   }).join('');
 }
+
+function setLeaderboardRange(range) {
+  if (range === leaderboardRange || !RANGE_SCALE[range]) return;
+  leaderboardRange = range;
+
+  leaderboardRangeEl.querySelectorAll('.range-filter__btn').forEach((btn) => {
+    btn.classList.toggle('range-filter__btn--active', btn.dataset.range === range);
+  });
+
+  renderLeaderboard();
+}
+
+leaderboardRangeEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('.range-filter__btn');
+  if (btn) setLeaderboardRange(btn.dataset.range);
+});
 
 // --- View switching ----------------------------------------------------------
 
@@ -359,11 +414,17 @@ tabMapEl.addEventListener('click', () => showView('map'));
 tabGroupEl.addEventListener('click', () => showView('group'));
 
 renderLeaderboard();
+updateMapEmptyState();
 
 // --- Map: setup + your trip route (PART 1) ----------------------------------
 // Real data: this section draws the GPS points captured during a trip.
 
-const MAP_CENTER = [51.505, -0.09]; // fallback view before any trip exists
+// Neutral fallback view — the whole world, zoomed out — used until
+// geolocation resolves, or permanently if it's denied/unavailable. Never
+// falls back to a specific hardcoded city.
+let MAP_CENTER = [20, 0];
+const WORLD_ZOOM = 2;
+const USER_ZOOM = 13;
 
 let map = null;
 let routeLayer = null;       // holds the polyline + start/end markers
@@ -375,7 +436,7 @@ let tripRouteBounds = null;  // map bounds of the last drawn route
 function ensureMap() {
   if (map) return;
 
-  map = L.map('map').setView(MAP_CENTER, 13);
+  map = L.map('map').setView(MAP_CENTER, WORLD_ZOOM);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -385,7 +446,28 @@ function ensureMap() {
   routeLayer = L.layerGroup().addTo(map);
   friendLayer = L.layerGroup().addTo(map);
 
+  centerMapOnUser();
   startFriendSimulation(); // PART 2 — see the MOCK section below
+}
+
+// Recenter on the browser's current-position fix, once, on map creation.
+// Silently keeps the neutral world view if permission is denied or the
+// device has no GPS. A real trip route already on screen takes priority.
+function centerMapOnUser() {
+  if (!navigator.geolocation) return;
+
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      MAP_CENTER = [position.coords.latitude, position.coords.longitude];
+      if (!tripRouteBounds) {
+        map.setView(MAP_CENTER, USER_ZOOM);
+      }
+    },
+    () => {
+      // Denied or unavailable — MAP_CENTER stays the neutral world view.
+    },
+    { maximumAge: 5 * 60 * 1000 }
+  );
 }
 
 // A small round pin with initials + a name label, used for friends and "You".
@@ -850,6 +932,8 @@ stopBtn.addEventListener('click', () => {
   // Nothing worth logging for a trip with no real movement (e.g. an
   // accidental start/stop before a single GPS fix came in).
   if (tripPoints.length >= 2) {
+    hasSavedTrips = true;
+    updateMapEmptyState();
     saveTrip(stats);
   }
 
