@@ -22,6 +22,8 @@
         <p class="auth__sub" id="authSub">Sign in to your driving log.</p>
 
         <form id="authForm" novalidate>
+          <input class="field" id="authDisplayName" type="text" placeholder="Display name (optional)"
+                 autocomplete="name" maxlength="30" hidden>
           <input class="field" id="authEmail" type="email" placeholder="Email"
                  autocomplete="email" required>
           <input class="field" id="authPassword" type="password" placeholder="Password"
@@ -102,7 +104,7 @@
           <button class="range-filter__btn range-filter__btn--active" data-range="all" type="button">All Time</button>
         </div>
         <div class="leaderboard__list" id="leaderboardList"></div>
-        <p class="hint">Sample data for now — ranked by total distance driven. Shorter ranges scale each entry's all-time stats down proportionally until this connects to real trip dates.</p>
+        <p class="hint">Ranked by total distance driven within your group, for the selected time range.</p>
       </section>
 
       <!-- ============ Map view ============ -->
@@ -126,10 +128,10 @@
         <ul class="legend">
           <li><span class="legend__dot" style="background:#E0A542"></span>You / route / start</li>
           <li><span class="legend__dot" style="background:#EDEDEA"></span>Trip finish</li>
-          <li><span class="legend__dot" style="background:#5B9AA8"></span>Group members sharing (simulated)</li>
+          <li><span class="legend__dot" style="background:#5B9AA8"></span>Group members sharing live</li>
         </ul>
 
-        <p class="hint">Only group members with live sharing switched ON appear here — movement is simulated. Your route appears after you stop a trip.</p>
+        <p class="hint">Only group members with live sharing switched ON appear here. Your route appears after you stop a trip.</p>
       </section>
 
       <!-- ============ Group view ============ -->

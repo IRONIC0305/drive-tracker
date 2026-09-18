@@ -1,12 +1,9 @@
 // Drive Tracker — trip tracking + live stats
 
 // ============================================================================
-// SUPABASE CONFIG  (the only real backend wiring so far)
+// SUPABASE CONFIG  (real backend for everything: auth, trips, groups, live
+// sharing via Realtime Broadcast/Presence, and the group leaderboard)
 // ============================================================================
-// Login / signup is REAL (Supabase Auth, email + password). Everything else —
-// leaderboard, group, map friends — is still mock data (see the MOCK sections
-// further down). Wiring those to the database comes later.
-//
 // supabase-js v2 is loaded from a CDN <script> in index.html, which puts a
 // global `supabase` object on the page. createClient(projectUrl, key) — the
 // key is Supabase's new "publishable key", which replaces what used to be
@@ -20,29 +17,14 @@
 // SECURITY: never put the *secret* key (starts with sb_secret_, formerly the
 // service_role key) in this file. It bypasses row-level security and this
 // file is served to the browser and committed to git.
+//
+// The schema, RLS policies, and Realtime Authorization needed for groups and
+// live sharing live in supabase-schema.sql (run once in the Supabase SQL
+// editor) — not in this file, since this project has no migration tooling.
 const SUPABASE_URL = 'https://jacsheofjgaysemerfln.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_AqA40yERnQIfhGnJvebYzQ_A91uk-9X';
 
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
-
-// --- Leaderboard data ---------------------------------------------------------
-// Hardcoded sample data standing in for a future database query. When a real
-// backend exists, replace this array with whatever the query returns, e.g.
-//   const LEADERBOARD_DATA = await fetchLeaderboardFromServer();
-// Each item is one friend. Keep these four field names and the rest of the
-// leaderboard code keeps working unchanged:
-//   name      - string,  display name
-//   totalKm   - number,  total distance driven, in kilometres
-//   trips     - number,  how many trips they've recorded
-//   longestKm - number,  their single longest trip, in kilometres
-// (Order here does not matter — renderLeaderboard() sorts by totalKm.)
-const LEADERBOARD_DATA = [
-  { name: 'Alex Rivera',  totalKm: 1240.5, trips: 48, longestKm: 210.3 },
-  { name: 'Priya Nair',   totalKm: 980.2,  trips: 39, longestKm: 175.0 },
-  { name: 'Sam Okafor',   totalKm: 1520.8, trips: 61, longestKm: 305.6 },
-  { name: 'Mia Chen',     totalKm: 445.9,  trips: 22, longestKm: 98.4  },
-  { name: 'Diego Santos', totalKm: 760.0,  trips: 30, longestKm: 140.7 },
-];
 
 let watchId = null;
 let tripPoints = [];
@@ -239,6 +221,7 @@ async function saveTrip(stats) {
   }
 
   loadTripHistory();
+  loadGroupLeaderboard(); // this trip may change your group's leaderboard totals
 }
 
 // Pull the logged-in user's past trips, most recent first, and render them.
@@ -287,77 +270,6 @@ function renderTripHistory(trips) {
       </div>`;
   }).join('');
 }
-
-// --- Leaderboard ---------------------------------------------------------
-
-// Time-range filter: no real trip dates yet, so shorter ranges just scale
-// each entry's all-time stats down as if activity were spread evenly across
-// a year. Real date-based filtering replaces this once trips carry dates.
-const RANGE_SCALE = { week: 1 / 52, month: 1 / 12, all: 1 };
-let leaderboardRange = 'all';
-
-// Scale LEADERBOARD_DATA down for the given range. longestKm is clamped to
-// the scaled total so a single "longest trip" never exceeds the range total.
-function scaledLeaderboardData(range) {
-  const scale = RANGE_SCALE[range];
-  if (scale === 1) return LEADERBOARD_DATA;
-
-  return LEADERBOARD_DATA.map((friend) => {
-    const totalKm = friend.totalKm * scale;
-    return {
-      ...friend,
-      totalKm,
-      trips: Math.round(friend.trips * scale),
-      longestKm: Math.min(friend.longestKm, totalKm),
-    };
-  });
-}
-
-// Build the ranked leaderboard rows for the current time range.
-function renderLeaderboard() {
-  // Copy first (slice) so we never reorder the original data, then sort by
-  // total distance, biggest first.
-  const ranked = scaledLeaderboardData(leaderboardRange)
-    .slice()
-    .sort((a, b) => b.totalKm - a.totalKm);
-
-  leaderboardListEl.innerHTML = ranked.map((friend, index) => {
-    const position = index + 1;          // P1, P2, P3 …
-    const isP1 = position === 1;
-    // The pack visibly thins out below P1: P2/P3 get a slight boost,
-    // P4+ fade slightly — P1's own styling is untouched.
-    const tierClass = isP1 ? '' : position <= 3 ? ' friend--rank-upper' : ' friend--rank-lower';
-
-    return `
-      <div class="friend${isP1 ? ' friend--p1' : ''}${tierClass}">
-        <span class="pos-badge${isP1 ? ' pos-badge--p1' : ''}">P${position}</span>
-        <div class="friend__body">
-          <span class="friend__name">${friend.name}</span>
-          <div class="friend__stats">
-            <span><strong>${friend.totalKm.toFixed(1)}</strong> km total</span>
-            <span><strong>${friend.trips}</strong> trips</span>
-            <span><strong>${friend.longestKm.toFixed(1)}</strong> km longest</span>
-          </div>
-        </div>
-      </div>`;
-  }).join('');
-}
-
-function setLeaderboardRange(range) {
-  if (range === leaderboardRange || !RANGE_SCALE[range]) return;
-  leaderboardRange = range;
-
-  leaderboardRangeEl.querySelectorAll('.range-filter__btn').forEach((btn) => {
-    btn.classList.toggle('range-filter__btn--active', btn.dataset.range === range);
-  });
-
-  renderLeaderboard();
-}
-
-leaderboardRangeEl.addEventListener('click', (e) => {
-  const btn = e.target.closest('.range-filter__btn');
-  if (btn) setLeaderboardRange(btn.dataset.range);
-});
 
 // --- View switching ----------------------------------------------------------
 
@@ -413,7 +325,6 @@ tabLeaderboardEl.addEventListener('click', () => showView('leaderboard'));
 tabMapEl.addEventListener('click', () => showView('map'));
 tabGroupEl.addEventListener('click', () => showView('group'));
 
-renderLeaderboard();
 updateMapEmptyState();
 
 // --- Map: setup + your trip route (PART 1) ----------------------------------
@@ -428,7 +339,7 @@ const USER_ZOOM = 13;
 
 let map = null;
 let routeLayer = null;       // holds the polyline + start/end markers
-let friendLayer = null;      // holds the simulated friend markers
+let friendLayer = null;      // holds the live group-member markers
 let meMarker = null;         // the "You" marker, shown only while sharing
 let tripRouteBounds = null;  // map bounds of the last drawn route
 
@@ -447,7 +358,8 @@ function ensureMap() {
   friendLayer = L.layerGroup().addTo(map);
 
   centerMapOnUser();
-  startFriendSimulation(); // PART 2 — see the MOCK section below
+  rebuildFriendMarkers(); // no-op until you're in a group with someone sharing
+  updateMeMarker();
 }
 
 // Recenter on the browser's current-position fix, once, on map creation.
@@ -470,7 +382,7 @@ function centerMapOnUser() {
   );
 }
 
-// A small round pin with initials + a name label, used for friends and "You".
+// A small round pin with initials + a name label, used for group members and "You".
 function makePin(name, color) {
   const initials = name
     .split(/\s+/)
@@ -525,132 +437,200 @@ function renderTripRoute() {
 }
 
 // ============================================================================
-// MOCK — people, groups & membership (PARTS 2 + 3)
+// GROUPS & LIVE SHARING  (real — Supabase `groups`/`group_members`/`profiles`
+// tables for membership, Realtime Broadcast + Presence for live location)
 // ----------------------------------------------------------------------------
-// None of this talks to a server. Each block below is labelled with the
-// Supabase table it will become. To go real you replace the four data
-// structures with query results and swap the timer in startFriendSimulation()
-// for a `live_locations` Realtime subscription — the render code is unchanged.
+// See supabase-schema.sql for the tables, RLS policies, the
+// join_group_by_code() RPC, and the Realtime Authorization policy this
+// section depends on.
 // ============================================================================
 
-let isSharingLocation = false; // mirrors YOUR toggle; real code reads this too
-let myGroup = null;            // the group you're currently in, or null
+// A small fixed palette, deterministically hashed from each user's id so
+// their pin color is stable across devices/sessions without coordination.
+const PIN_COLORS = ['#9BC7D1', '#7FB7C4', '#6BA9B6', '#B7D6DE', '#D98C8C', '#C7A9D1', '#A9C7A0', '#D9BE8C'];
 
-// ----- MOCK: `profiles` table -----------------------------------------------
-// One row per person: identity + map-pin colour + leaderboard stats. Keyed by
-// user id so the other tables can reference people by id alone.
-const MOCK_PROFILES = {
-  me:      { id: 'me',      name: 'You',          color: '#E0A542', totalKm: 612.4,  trips: 27 },
-  u_sam:   { id: 'u_sam',   name: 'Sam Okafor',   color: '#9BC7D1', totalKm: 1520.8, trips: 61 },
-  u_priya: { id: 'u_priya', name: 'Priya Nair',   color: '#7FB7C4', totalKm: 980.2,  trips: 39 },
-  u_diego: { id: 'u_diego', name: 'Diego Santos', color: '#6BA9B6', totalKm: 760.0,  trips: 30 },
-  u_mia:   { id: 'u_mia',   name: 'Mia Chen',     color: '#B7D6DE', totalKm: 445.9,  trips: 22 },
-};
-
-// ----- MOCK: `live_locations` stream --------------------------------------
-// A preset loop of [lat, lng] waypoints per user, used to fake movement.
-// Real app: these coordinates arrive over Supabase Realtime instead.
-const MOCK_LIVE_PATHS = {
-  u_sam:   [[51.501, -0.100], [51.499, -0.092], [51.497, -0.101], [51.500, -0.110]],
-  u_priya: [[51.507, -0.093], [51.509, -0.086], [51.506, -0.080], [51.503, -0.089]],
-  u_diego: [[51.512, -0.099], [51.514, -0.090], [51.511, -0.085], [51.509, -0.097]],
-  u_mia:   [[51.508, -0.105], [51.505, -0.099], [51.503, -0.104], [51.506, -0.112]],
-};
-
-// ----- MOCK: `groups` table -----------------------------------------------
-// Keyed by group id. Ships with one pre-built group that any invite code will
-// join (see handleJoinGroup()). Groups you create get added here at runtime.
-const MOCK_GROUPS = {
-  g_apex: { id: 'g_apex', name: 'Apex Hunters', inviteCode: 'A7X4K2', createdBy: 'u_sam' },
-};
-
-// ----- MOCK: `group_members` join table ---------------------------------
-// One row per (group, user). `sharing` = that member is broadcasting their
-// live location to this group right now. Your own row is pushed/spliced as
-// you join and leave.
-const MOCK_GROUP_MEMBERS = [
-  { groupId: 'g_apex', userId: 'u_sam',   sharing: true  },
-  { groupId: 'g_apex', userId: 'u_priya', sharing: true  },
-  { groupId: 'g_apex', userId: 'u_diego', sharing: false },
-  { groupId: 'g_apex', userId: 'u_mia',   sharing: false },
-];
-// ----- END MOCK data ------------------------------------------------------------
-
-// Six visually-unambiguous characters (no 0/O/1/I) — e.g. "X7K2P9".
-function generateInviteCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
+function colorForUserId(userId) {
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = (hash * 31 + userId.charCodeAt(i)) >>> 0;
   }
-  return code;
+  return PIN_COLORS[hash % PIN_COLORS.length];
 }
 
-// group_members rows for one group, resolved against MOCK_PROFILES.
-// Returns [{ profile, sharing, isMe }]; skips any member with no profile row.
-function groupMembers(groupId) {
-  return MOCK_GROUP_MEMBERS
-    .filter((m) => m.groupId === groupId)
+let myProfile = null;          // { display_name, color } for the logged-in user
+let myGroup = null;            // { id, name, invite_code, created_by }, or null
+let groupMembersCache = [];    // [{ profile: { id, display_name, color }, isMe }]
+let presenceState = {};        // userId -> true, who currently has sharing ON
+let friendPositions = {};      // userId -> [lat, lng], last broadcast position received
+let friendMarkers = {};        // userId -> Leaflet marker
+let myGroupChannel = null;     // the Realtime channel for the current group
+let isSharingLocation = false; // mirrors YOUR toggle
+let myLivePos = null;          // your own last GPS fix while sharing
+let shareWatchId = null;       // geolocation watch dedicated to broadcasting
+let lastBroadcastAt = 0;
+
+const BROADCAST_INTERVAL_MS = 2000;
+
+// Ensure a `profiles` row exists for the logged-in user. Display name comes
+// from signup metadata (falls back to the email's local-part); color is
+// deterministic from the user id. `ignoreDuplicates` means this never
+// clobbers a name/color after the first write.
+async function ensureProfile(session) {
+  const meta = session.user.user_metadata || {};
+  const fallback = (session.user.email || '').split('@')[0] || 'Driver';
+  const displayName = (meta.display_name && meta.display_name.trim()) || fallback;
+  const color = colorForUserId(session.user.id);
+
+  const { error: upsertError } = await supabaseClient
+    .from('profiles')
+    .upsert({ id: session.user.id, display_name: displayName, color }, { onConflict: 'id', ignoreDuplicates: true });
+
+  if (upsertError) {
+    console.error('Profile upsert failed:', upsertError);
+  }
+
+  const { data, error } = await supabaseClient
+    .from('profiles')
+    .select('display_name, color')
+    .eq('id', session.user.id)
+    .single();
+
+  if (error) {
+    console.error('Profile load failed:', error);
+    myProfile = { display_name: displayName, color };
+  } else {
+    myProfile = data;
+  }
+}
+
+// Restore which group you're in (if any) after login/refresh — you can only
+// be in one group at a time in this app.
+async function loadMyGroup() {
+  const { data, error } = await supabaseClient
+    .from('group_members')
+    .select('groups(id, name, invite_code, created_by)')
+    .eq('user_id', currentUserId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Load group failed:', error);
+    myGroup = null;
+    return;
+  }
+
+  myGroup = (data && data.groups) || null;
+}
+
+// group_members rows for one group, resolved against `profiles`.
+// Returns [{ profile, isMe }]; skips any member with no profile row.
+async function groupMembers(groupId) {
+  const { data, error } = await supabaseClient
+    .from('group_members')
+    .select('user_id, profiles(id, display_name, color)')
+    .eq('group_id', groupId);
+
+  if (error) {
+    console.error('Load group members failed:', error);
+    return [];
+  }
+
+  return (data || [])
+    .filter((m) => m.profiles)
     .map((m) => ({
-      profile: MOCK_PROFILES[m.userId],
-      sharing: m.sharing,
-      isMe: m.userId === 'me',
-    }))
-    .filter((m) => m.profile);
+      profile: m.profiles,
+      isMe: m.user_id === currentUserId,
+    }));
 }
 
 // --- Live friend markers on the map (PART 4) -------------------------------
-// A moving marker is shown ONLY for group members (not you) whose `sharing`
-// is true. Members who are off get no marker at all — a greyed-out pin would
-// leak "this person exists but is hiding", which defeats the off switch.
-
-let friendTimerId = null;
-const friendSim = {}; // userId -> { marker, path, t }
+// A moving marker is shown ONLY for group members (not you) who are
+// currently present (sharing) on the group's Realtime channel AND whose
+// first position fix has arrived. Members who are off get no marker at
+// all — a greyed-out pin would leak "this person exists but is hiding",
+// which defeats the off switch.
 
 // The people who should currently have a marker.
 function visibleGroupMembers() {
-  if (!myGroup) return [];
-  return groupMembers(myGroup.id)
-    .filter((m) => !m.isMe && m.sharing && MOCK_LIVE_PATHS[m.profile.id])
+  return groupMembersCache
+    .filter((m) => !m.isMe && presenceState[m.profile.id])
     .map((m) => m.profile);
 }
 
 // Rebuild all friend markers from scratch. Safe to call whenever the group or
-// a member's sharing state changes; a no-op until the map has been created.
+// presence state changes; a no-op until the map has been created.
 function rebuildFriendMarkers() {
   if (!friendLayer) return;
 
   friendLayer.clearLayers();
-  for (const key of Object.keys(friendSim)) delete friendSim[key];
+  friendMarkers = {};
 
   visibleGroupMembers().forEach((profile) => {
-    const path = MOCK_LIVE_PATHS[profile.id];
-    const marker = L.marker(path[0], {
-      icon: makePin(profile.name, profile.color),
+    const pos = friendPositions[profile.id];
+    if (!pos) return; // present but no GPS fix received yet
+    const marker = L.marker(pos, { icon: makePin(profile.display_name, profile.color) }).addTo(friendLayer);
+    friendMarkers[profile.id] = marker;
+  });
+}
+
+// A single broadcast tick from a group member — cheaper than a full rebuild.
+function updateFriendMarker(payload) {
+  const { user_id: userId, lat, lng } = payload;
+  if (!userId || userId === currentUserId) return; // ignore malformed/self payloads
+
+  friendPositions[userId] = [lat, lng];
+  if (!presenceState[userId]) return; // not currently marked as sharing
+
+  const member = groupMembersCache.find((m) => m.profile.id === userId);
+  if (!member) return; // not a member of the group we're currently viewing
+
+  if (!friendLayer) return;
+
+  if (friendMarkers[userId]) {
+    friendMarkers[userId].setLatLng([lat, lng]);
+  } else {
+    friendMarkers[userId] = L.marker([lat, lng], {
+      icon: makePin(member.profile.display_name, member.profile.color),
     }).addTo(friendLayer);
-    friendSim[profile.id] = { marker, path, t: 0 };
+  }
+}
+
+// --- Realtime channel lifecycle ---------------------------------------------
+
+function joinGroupChannel(groupId) {
+  myGroupChannel = supabaseClient.channel(`group:${groupId}`, {
+    config: { private: true, presence: { key: currentUserId } },
+  });
+
+  myGroupChannel.on('presence', { event: 'sync' }, () => {
+    const state = myGroupChannel.presenceState();
+    presenceState = {};
+    Object.keys(state).forEach((userId) => { presenceState[userId] = true; });
+    rebuildFriendMarkers();
+    if (currentView === 'group') renderGroup(); // refresh the "Sharing live" pills
+  });
+
+  myGroupChannel.on('broadcast', { event: 'location' }, ({ payload }) => {
+    updateFriendMarker(payload);
+  });
+
+  myGroupChannel.subscribe((status) => {
+    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      console.error('Group realtime channel error:', status);
+    }
   });
 }
 
-// Nudge every visible friend further along their loop. `t` counts path
-// segments; its fractional part slides between two waypoints.
-function stepFriendSimulation() {
-  Object.values(friendSim).forEach((entry) => {
-    const count = entry.path.length;
-    entry.t += 0.25;
+function leaveGroupChannel() {
+  if (!myGroupChannel) return;
 
-    const seg = Math.floor(entry.t) % count;
-    const frac = entry.t - Math.floor(entry.t);
-    const [aLat, aLng] = entry.path[seg];
-    const [bLat, bLng] = entry.path[(seg + 1) % count];
-
-    entry.marker.setLatLng([aLat + (bLat - aLat) * frac, aLng + (bLng - aLng) * frac]);
-  });
-}
-
-function startFriendSimulation() {
-  rebuildFriendMarkers();
-  friendTimerId = setInterval(stepFriendSimulation, 2000);
+  myGroupChannel.untrack();
+  supabaseClient.removeChannel(myGroupChannel);
+  myGroupChannel = null;
+  presenceState = {};
+  friendPositions = {};
+  friendMarkers = {};
+  if (friendLayer) friendLayer.clearLayers();
 }
 
 // --- Group view: setup screen + in-group screen ---------------------------
@@ -676,6 +656,7 @@ function renderGroupSetup() {
       <h3 class="panel__title">Join a Group</h3>
       <p class="panel__hint">Enter a 6-character invite code from a friend.</p>
       <input class="field field--code" id="joinCode" type="text" placeholder="X7K2P9" maxlength="6" autocomplete="off">
+      <p class="auth__error" id="joinError" hidden></p>
       <button class="btn btn--ghost btn--block" id="joinBtn" type="button">Join Group</button>
     </div>`;
 
@@ -685,14 +666,14 @@ function renderGroupSetup() {
 
 // In a group — name, invite code, member list, leave.
 function renderGroupHome() {
-  const members = groupMembers(myGroup.id);
+  const members = groupMembersCache;
 
   groupBodyEl.innerHTML = `
     <div class="group__header">
       <h3 class="group__name">${myGroup.name}</h3>
       <div class="group__code-row">
         <span class="group__code-label">Invite code</span>
-        <span class="group__code">${myGroup.inviteCode}</span>
+        <span class="group__code">${myGroup.invite_code}</span>
         <button class="btn btn--ghost btn--sm" id="copyCodeBtn" type="button">Copy code</button>
       </div>
     </div>
@@ -709,15 +690,12 @@ function renderGroupHome() {
 }
 
 // One member row — reuses the leaderboard's .friend styling for consistency.
-function renderMemberRow({ profile, sharing, isMe }) {
+function renderMemberRow({ profile, isMe }) {
+  const sharing = !!presenceState[profile.id] || (isMe && isSharingLocation);
   return `
     <div class="friend">
       <div class="friend__body">
-        <span class="friend__name">${profile.name}${isMe ? ' <span class="tag">You</span>' : ''}</span>
-        <div class="friend__stats">
-          <span><strong>${profile.totalKm.toFixed(1)}</strong> km total</span>
-          <span><strong>${profile.trips}</strong> trips</span>
-        </div>
+        <span class="friend__name">${profile.display_name}${isMe ? ' <span class="tag">You</span>' : ''}</span>
       </div>
       <span class="live-pill ${sharing ? 'live-pill--on' : 'live-pill--off'}">${sharing ? 'Sharing live' : 'Location off'}</span>
     </div>`;
@@ -725,47 +703,125 @@ function renderMemberRow({ profile, sharing, isMe }) {
 
 // --- Group actions ----------------------------------------------------------
 
-function handleCreateGroup() {
-  const name = (groupBodyEl.querySelector('#createName').value || '').trim() || 'My Group';
-  const group = {
-    id: 'g_' + generateInviteCode().toLowerCase(),
-    name,
-    inviteCode: generateInviteCode(),
-    createdBy: 'me',
-  };
-  MOCK_GROUPS[group.id] = group;
-  MOCK_GROUP_MEMBERS.push({ groupId: group.id, userId: 'me', sharing: false });
-  myGroup = group;
-  onGroupChanged();
-}
-
-function handleJoinGroup() {
-  // Mock: any code joins the one pre-built group. A real app would look the
-  // group up by invite_code and show an error when nothing matched.
-  const group = MOCK_GROUPS.g_apex;
-  const alreadyIn = MOCK_GROUP_MEMBERS.some(
-    (m) => m.groupId === group.id && m.userId === 'me'
-  );
-  if (!alreadyIn) {
-    MOCK_GROUP_MEMBERS.push({ groupId: group.id, userId: 'me', sharing: false });
+// Six visually-unambiguous characters (no 0/O/1/I) — e.g. "X7K2P9".
+function generateInviteCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
   }
-  myGroup = group;
-  onGroupChanged();
+  return code;
 }
 
-function handleLeaveGroup() {
-  const i = MOCK_GROUP_MEMBERS.findIndex(
-    (m) => m.groupId === myGroup.id && m.userId === 'me'
-  );
-  if (i !== -1) MOCK_GROUP_MEMBERS.splice(i, 1);
+function showGroupSetupError(text) {
+  const el = groupBodyEl.querySelector('#joinError');
+  if (el) {
+    el.textContent = text;
+    el.hidden = false;
+  }
+}
+
+function hideGroupSetupError() {
+  const el = groupBodyEl.querySelector('#joinError');
+  if (el) {
+    el.hidden = true;
+    el.textContent = '';
+  }
+}
+
+async function handleCreateGroup() {
+  const name = (groupBodyEl.querySelector('#createName').value || '').trim() || 'My Group';
+  const createBtn = groupBodyEl.querySelector('#createBtn');
+  createBtn.disabled = true;
+  hideGroupSetupError();
+
+  let inserted = null;
+  let lastError = null;
+
+  // A generated code colliding with an existing one is rare but possible —
+  // retry a few times on a unique-violation (Postgres code 23505) before
+  // giving up.
+  for (let attempt = 0; attempt < 5 && !inserted; attempt++) {
+    const { data, error } = await supabaseClient
+      .from('groups')
+      .insert({ name, invite_code: generateInviteCode(), created_by: currentUserId })
+      .select()
+      .single();
+
+    if (error) {
+      lastError = error;
+      if (error.code !== '23505') break;
+    } else {
+      inserted = data;
+    }
+  }
+
+  if (!inserted) {
+    showGroupSetupError((lastError && lastError.message) || 'Could not create group — try again.');
+    createBtn.disabled = false;
+    return;
+  }
+
+  const { error: memberError } = await supabaseClient
+    .from('group_members')
+    .insert({ group_id: inserted.id, user_id: currentUserId });
+
+  if (memberError) {
+    console.error('Join own group failed:', memberError);
+    showGroupSetupError(memberError.message);
+    createBtn.disabled = false;
+    return;
+  }
+
+  myGroup = inserted;
+  await onGroupChanged();
+}
+
+async function handleJoinGroup() {
+  const codeInput = groupBodyEl.querySelector('#joinCode');
+  const code = (codeInput.value || '').trim();
+  const joinBtn = groupBodyEl.querySelector('#joinBtn');
+
+  hideGroupSetupError();
+  if (!code) {
+    showGroupSetupError('Enter an invite code.');
+    return;
+  }
+
+  joinBtn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('join_group_by_code', { p_code: code });
+  joinBtn.disabled = false;
+
+  if (error) {
+    showGroupSetupError(error.message || "Couldn't join that group.");
+    return;
+  }
+
+  myGroup = data;
+  await onGroupChanged();
+}
+
+async function handleLeaveGroup() {
+  if (!myGroup) return;
+
+  const { error } = await supabaseClient
+    .from('group_members')
+    .delete()
+    .eq('group_id', myGroup.id)
+    .eq('user_id', currentUserId);
+
+  if (error) {
+    console.error('Leave group failed:', error);
+  }
+
   myGroup = null;
-  shareToggleEl.checked = false; // leaving a group also stops your sharing
-  onGroupChanged();
+  shareToggleEl.checked = false;
+  await onGroupChanged();
 }
 
 function handleCopyCode() {
   const btn = groupBodyEl.querySelector('#copyCodeBtn');
-  copyText(myGroup.inviteCode).then((ok) => {
+  copyText(myGroup.invite_code).then((ok) => {
     btn.textContent = ok ? 'Copied' : 'Press ⌘C';
     setTimeout(() => { btn.textContent = 'Copy code'; }, 1500);
   });
@@ -795,12 +851,23 @@ function fallbackCopy(text) {
   }
 }
 
-// Re-sync everything that depends on which group you're in.
-function onGroupChanged() {
+// Re-sync everything that depends on which group you're in: reload members,
+// (re)connect the group's realtime channel, and refresh every view that
+// shows group data.
+async function onGroupChanged() {
+  leaveGroupChannel();
+
+  if (myGroup) {
+    groupMembersCache = await groupMembers(myGroup.id);
+    joinGroupChannel(myGroup.id);
+  } else {
+    groupMembersCache = [];
+  }
+
   renderGroup();          // the Group tab
-  rebuildFriendMarkers(); // the map's live markers (no-op until the map exists)
   syncShareToggleEnabled();
   applyShareState();      // the share panel copy + your own "You" marker
+  loadGroupLeaderboard(); // the Leaderboard tab
 }
 
 // Your share toggle only makes sense inside a group.
@@ -811,9 +878,9 @@ function syncShareToggleEnabled() {
 
 // --- Share my live location toggle (PART 5) --------------------------------
 // Default OFF, and it's scoped to YOUR CURRENT GROUP — not the whole app.
-// In this mock, "sharing" shows the amber "You" marker on the map and updates
-// the status line; with a real backend this same switch starts/stops writing
-// your coordinates to the group's live_locations rows.
+// Turning it on tracks Presence on the group's realtime channel (drives the
+// "Sharing live" pill everywhere) and starts broadcasting your GPS fixes;
+// turning it off (or losing the tab/connection) stops both.
 
 function applyShareState() {
   isSharingLocation = shareToggleEl.checked && !!myGroup;
@@ -829,13 +896,21 @@ function applyShareState() {
       'share__status ' + (isSharingLocation ? 'share__status--on' : 'share__status--off');
   }
 
-  updateMeMarker();
+  if (isSharingLocation) {
+    if (myGroupChannel) myGroupChannel.track({ user_id: currentUserId });
+    startLocationBroadcast();
+  } else {
+    if (myGroupChannel) myGroupChannel.untrack();
+    stopLocationBroadcast();
+  }
+
+  if (currentView === 'group') renderGroup(); // reflect your own pill instantly
 }
 
 function updateMeMarker() {
   if (!map) return;
 
-  if (!isSharingLocation) {
+  if (!isSharingLocation || !myLivePos) {
     if (meMarker) {
       map.removeLayer(meMarker);
       meMarker = null;
@@ -843,16 +918,52 @@ function updateMeMarker() {
     return;
   }
 
-  // Show "You" at the last known point of the current/most recent trip,
-  // or the map centre if there is no trip yet.
-  const last = tripPoints[tripPoints.length - 1];
-  const pos = last ? [last.lat, last.lng] : MAP_CENTER;
-
   if (meMarker) {
-    meMarker.setLatLng(pos);
+    meMarker.setLatLng(myLivePos);
   } else {
-    meMarker = L.marker(pos, { icon: makePin('You', '#E0A542') }).addTo(map);
+    meMarker = L.marker(myLivePos, { icon: makePin('You', '#E0A542') }).addTo(map);
   }
+}
+
+// Start a geolocation watch dedicated to sharing (independent of trip
+// tracking): updates your own marker on every fix, and broadcasts to the
+// group channel at most once every BROADCAST_INTERVAL_MS.
+function startLocationBroadcast() {
+  if (!navigator.geolocation || shareWatchId != null) return;
+
+  shareWatchId = navigator.geolocation.watchPosition(
+    (position) => {
+      const lat = position.coords.latitude;
+      const lng = position.coords.longitude;
+      myLivePos = [lat, lng];
+      updateMeMarker();
+
+      const now = Date.now();
+      if (now - lastBroadcastAt < BROADCAST_INTERVAL_MS) return;
+      lastBroadcastAt = now;
+
+      if (myGroupChannel) {
+        myGroupChannel.send({
+          type: 'broadcast',
+          event: 'location',
+          payload: { user_id: currentUserId, lat, lng, ts: now },
+        });
+      }
+    },
+    (error) => {
+      console.error('Share GPS error:', error);
+    },
+    { enableHighAccuracy: true }
+  );
+}
+
+function stopLocationBroadcast() {
+  if (shareWatchId != null) {
+    navigator.geolocation.clearWatch(shareWatchId);
+    shareWatchId = null;
+  }
+  myLivePos = null;
+  updateMeMarker();
 }
 
 shareToggleEl.addEventListener('change', applyShareState);
@@ -862,6 +973,131 @@ shareToggleEl.addEventListener('change', applyShareState);
 syncShareToggleEnabled();
 renderGroup();
 applyShareState();
+
+// ============================================================================
+// LEADERBOARD  (real — aggregated from the `trips` table, scoped to your
+// current group)
+// ============================================================================
+
+let leaderboardRange = 'all'; // 'week' | 'month' | 'all'
+let leaderboardCache = [];    // [{ name, totalKm, trips, longestKm }]
+
+function computeRangeSince(range) {
+  if (range === 'all') return null;
+  const since = new Date();
+  if (range === 'week') since.setDate(since.getDate() - 7);
+  if (range === 'month') since.setMonth(since.getMonth() - 1);
+  return since.toISOString();
+}
+
+// Pull every group member's trips (RLS allows seeing a groupmate's trip
+// rows), aggregate per user in JS, and render.
+async function loadGroupLeaderboard() {
+  if (!myGroup || groupMembersCache.length === 0) {
+    leaderboardCache = [];
+    renderLeaderboard();
+    return;
+  }
+
+  leaderboardListEl.innerHTML = '<p class="hint">Loading…</p>';
+
+  const memberIds = groupMembersCache.map((m) => m.profile.id);
+  let query = supabaseClient
+    .from('trips')
+    .select('user_id, distance_km, created_at')
+    .in('user_id', memberIds);
+
+  const since = computeRangeSince(leaderboardRange);
+  if (since) query = query.gte('created_at', since);
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error('Leaderboard load failed:', error);
+    leaderboardListEl.innerHTML = '<p class="hint">Could not load the leaderboard — try again later.</p>';
+    return;
+  }
+
+  const totalsByUser = {};
+  (data || []).forEach((trip) => {
+    const km = Number(trip.distance_km) || 0;
+    const entry = totalsByUser[trip.user_id] || { totalKm: 0, trips: 0, longestKm: 0 };
+    entry.totalKm += km;
+    entry.trips += 1;
+    entry.longestKm = Math.max(entry.longestKm, km);
+    totalsByUser[trip.user_id] = entry;
+  });
+
+  leaderboardCache = groupMembersCache.map((m) => {
+    const totals = totalsByUser[m.profile.id] || { totalKm: 0, trips: 0, longestKm: 0 };
+    return {
+      name: m.profile.display_name + (m.isMe ? ' (You)' : ''),
+      totalKm: totals.totalKm,
+      trips: totals.trips,
+      longestKm: totals.longestKm,
+    };
+  });
+
+  renderLeaderboard();
+}
+
+// Build the ranked leaderboard rows for the current time range.
+function renderLeaderboard() {
+  if (!myGroup) {
+    leaderboardListEl.innerHTML = '<p class="hint">Join a group to see its leaderboard.</p>';
+    return;
+  }
+
+  if (leaderboardCache.length === 0) {
+    leaderboardListEl.innerHTML = '<p class="hint">No trips recorded in this range yet.</p>';
+    return;
+  }
+
+  // Copy first (slice) so we never reorder the cache, then sort by total
+  // distance, biggest first.
+  const ranked = leaderboardCache
+    .slice()
+    .sort((a, b) => b.totalKm - a.totalKm);
+
+  leaderboardListEl.innerHTML = ranked.map((friend, index) => {
+    const position = index + 1;          // P1, P2, P3 …
+    const isP1 = position === 1;
+    // The pack visibly thins out below P1: P2/P3 get a slight boost,
+    // P4+ fade slightly — P1's own styling is untouched.
+    const tierClass = isP1 ? '' : position <= 3 ? ' friend--rank-upper' : ' friend--rank-lower';
+
+    return `
+      <div class="friend${isP1 ? ' friend--p1' : ''}${tierClass}">
+        <span class="pos-badge${isP1 ? ' pos-badge--p1' : ''}">P${position}</span>
+        <div class="friend__body">
+          <span class="friend__name">${friend.name}</span>
+          <div class="friend__stats">
+            <span><strong>${friend.totalKm.toFixed(1)}</strong> km total</span>
+            <span><strong>${friend.trips}</strong> trips</span>
+            <span><strong>${friend.longestKm.toFixed(1)}</strong> km longest</span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function setLeaderboardRange(range) {
+  if (range === leaderboardRange || !['week', 'month', 'all'].includes(range)) return;
+  leaderboardRange = range;
+
+  leaderboardRangeEl.querySelectorAll('.range-filter__btn').forEach((btn) => {
+    btn.classList.toggle('range-filter__btn--active', btn.dataset.range === range);
+  });
+
+  loadGroupLeaderboard();
+}
+
+leaderboardRangeEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('.range-filter__btn');
+  if (btn) setLeaderboardRange(btn.dataset.range);
+});
+
+renderLeaderboard(); // shows the "join a group" prompt until real data loads
 
 // --- Buttons -----------------------------------------------------------
 
@@ -927,7 +1163,6 @@ stopBtn.addEventListener('click', () => {
   );
 
   renderTripRoute();  // draw the path on the Map tab
-  updateMeMarker();   // keep the "You" marker on the finish point if sharing
 
   // Nothing worth logging for a trip with no real movement (e.g. an
   // accidental start/stop before a single GPS fix came in).
@@ -954,6 +1189,7 @@ const authViewEl = document.getElementById('authView');
 const appViewEl = document.getElementById('appView');
 const logoutBtnEl = document.getElementById('logoutBtn');
 const authFormEl = document.getElementById('authForm');
+const authDisplayNameEl = document.getElementById('authDisplayName');
 const authEmailEl = document.getElementById('authEmail');
 const authPasswordEl = document.getElementById('authPassword');
 const authErrorEl = document.getElementById('authError');
@@ -1006,6 +1242,8 @@ function setAuthMode(mode) {
   authSignupEl.className = 'btn btn--block ' + (isLogin ? 'btn--ghost' : 'btn--start');
 
   authPasswordEl.setAttribute('autocomplete', isLogin ? 'current-password' : 'new-password');
+  authDisplayNameEl.hidden = isLogin; // only asked for at signup
+
   hideAuthMessage();
 }
 
@@ -1056,6 +1294,7 @@ async function submitAuth() {
 
   const email = authEmailEl.value.trim();
   const password = authPasswordEl.value;
+  const displayName = authDisplayNameEl.value.trim();
 
   hideAuthMessage();
 
@@ -1079,7 +1318,11 @@ async function submitAuth() {
   try {
     const { data, error } =
       authMode === 'signup'
-        ? await supabaseClient.auth.signUp({ email, password })
+        ? await supabaseClient.auth.signUp({
+            email,
+            password,
+            options: { data: { display_name: displayName || undefined } },
+          })
         : await supabaseClient.auth.signInWithPassword({ email, password });
 
     if (error) {
@@ -1123,14 +1366,33 @@ logoutBtnEl.addEventListener('click', async () => {
   await supabaseClient.auth.signOut(); // onAuthStateChange() handles the UI
 });
 
+// Everything that needs to happen once we know who's logged in: profile,
+// group membership + realtime channel, trip history.
+async function loadAppData(session) {
+  currentUserId = session.user.id;
+  await ensureProfile(session);
+  await loadMyGroup();
+  await onGroupChanged();
+  loadTripHistory();
+}
+
+// Tear down everything that only makes sense while logged in.
+function clearAppData() {
+  currentUserId = null;
+  myGroup = null;
+  groupMembersCache = [];
+  myProfile = null;
+  leaveGroupChannel();
+  stopLocationBroadcast();
+}
+
 async function initAuth() {
   setAuthMode('login');
 
   const { data: { session } } = await supabaseClient.auth.getSession();
   if (session) {
-    currentUserId = session.user.id;
     showAppScreen();
-    loadTripHistory();
+    await loadAppData(session);
   } else {
     showAuthScreen();
     if (KEY_LOOKS_UNSET) {
@@ -1141,13 +1403,12 @@ async function initAuth() {
   // Fires on login, logout, token refresh, and once on load.
   supabaseClient.auth.onAuthStateChange((_event, session) => {
     if (session) {
-      currentUserId = session.user.id;
       hideAuthMessage();
       authFormEl.reset();
       showAppScreen();
-      loadTripHistory();
+      loadAppData(session);
     } else {
-      currentUserId = null;
+      clearAppData();
       showAuthScreen();
     }
   });
