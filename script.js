@@ -840,10 +840,15 @@ function handleCopyCode() {
 // (mobile Safari/Chrome), falling back to copying a ready-to-send message.
 // The link carries ?join=CODE, which consumeInviteLinkIfAny() picks up and
 // auto-joins on the other end — no manual code entry needed.
-function handleInvite() {
+async function handleInvite() {
   const btn = groupBodyEl.querySelector('#inviteBtn');
-  const link = buildInviteLink(myGroup.invite_code);
   const message = `Join my group "${myGroup.name}" on Drive Tracker!`;
+
+  btn.disabled = true;
+  btn.textContent = 'Invite…';
+  const link = await shortenLink(buildInviteLink(myGroup.invite_code));
+  btn.disabled = false;
+  btn.textContent = 'Invite';
 
   if (navigator.share) {
     navigator.share({ title: 'Drive Tracker invite', text: message, url: link }).catch(() => {
@@ -860,6 +865,20 @@ function handleInvite() {
 
 function buildInviteLink(code) {
   return `${location.origin}${location.pathname}?join=${encodeURIComponent(code)}`;
+}
+
+// Best-effort shortening via TinyURL's free, keyless API — falls back to
+// the full link on any failure (offline, rate-limited, CORS hiccup, etc.)
+// so a shortener outage never blocks inviting someone.
+async function shortenLink(longUrl) {
+  try {
+    const res = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`);
+    if (!res.ok) return longUrl;
+    const short = (await res.text()).trim();
+    return short.startsWith('https://tinyurl.com/') ? short : longUrl;
+  } catch {
+    return longUrl;
+  }
 }
 
 // Consumes a `?join=CODE` link. Called once app data (and the group panel
