@@ -15,7 +15,17 @@
       <button id="logoutBtn" class="app__logout" type="button" hidden>Log out</button>
     </header>
 
-    <!-- ============ Auth screen (shown only when logged out) ============ -->
+    <!-- ============ Guest session banner (anonymous users only) ============ -->
+    <div class="guest-banner" id="guestBanner" hidden>
+      <p class="guest-banner__text">
+        You're using a guest session — tied to this browser. Save your account to keep
+        your data if you switch devices or clear your browser.
+      </p>
+      <button class="linkbtn guest-banner__action" id="saveAccountBtn" type="button">Save my account</button>
+    </div>
+
+    <!-- ============ Auth screen (shown only when logged out, or for the
+         Save-account / manual-login detour while logged in as a guest) ============ -->
     <section id="authView" hidden>
       <div class="panel auth" id="authPanel">
         <div class="auth__body" id="authBody">
@@ -41,6 +51,9 @@
           <span id="authToggleText">Don't have an account?</span>
           <button class="linkbtn" id="authToggle" type="button">Sign up</button>
         </p>
+        <p class="auth__toggle" id="authCancelRow" hidden>
+          <button class="linkbtn" id="authCancel" type="button">Back to app</button>
+        </p>
       </div>
     </section>
 
@@ -55,6 +68,11 @@
 
       <!-- ============ Tracker view ============ -->
       <section id="trackerView" class="view">
+        <div class="welcome-banner" id="welcomeBanner" hidden>
+          <p class="welcome-banner__text">Tap Start Trip to begin tracking — allow location access when your browser asks.</p>
+          <button class="welcome-banner__dismiss" id="welcomeDismiss" type="button" aria-label="Dismiss">&times;</button>
+        </div>
+
         <section class="stats" aria-label="Trip statistics">
           <div class="stat stat--hero">
             <span class="stat__value" id="distance">0.00</span>

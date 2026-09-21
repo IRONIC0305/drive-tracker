@@ -199,7 +199,40 @@ let hasSavedTrips = true;
 
 function updateMapEmptyState() {
   mapEmptyStateEl.hidden = hasSavedTrips;
+  syncWelcomeBanner();
 }
+
+// --- First-time welcome tip -------------------------------------------
+// Shown once, only to someone with zero trips ever saved — dismissing it
+// (or completing a first trip) hides it for good via localStorage.
+
+const WELCOME_BANNER_KEY = 'dt_welcome_dismissed';
+const welcomeBannerEl = document.getElementById('welcomeBanner');
+const welcomeDismissEl = document.getElementById('welcomeDismiss');
+
+function syncWelcomeBanner() {
+  if (hasSavedTrips) {
+    welcomeBannerEl.hidden = true;
+    return;
+  }
+  let dismissed = false;
+  try {
+    dismissed = localStorage.getItem(WELCOME_BANNER_KEY) === '1';
+  } catch (e) {
+    // Private browsing / blocked storage — fall back to showing it; worst
+    // case it reappears next visit, which is a reasonable degradation.
+  }
+  welcomeBannerEl.hidden = dismissed;
+}
+
+welcomeDismissEl.addEventListener('click', () => {
+  welcomeBannerEl.hidden = true;
+  try {
+    localStorage.setItem(WELCOME_BANNER_KEY, '1');
+  } catch (e) {
+    // Best-effort only — see above.
+  }
+});
 
 // Insert the just-finished trip as a row in `trips`, then refresh the list.
 async function saveTrip(stats) {
@@ -742,6 +775,7 @@ async function handleCreateGroup() {
   const name = (groupBodyEl.querySelector('#createName').value || '').trim() || 'My Group';
   const createBtn = groupBodyEl.querySelector('#createBtn');
   createBtn.disabled = true;
+  createBtn.textContent = 'Creating…';
   hideGroupSetupError();
 
   let inserted = null;
@@ -768,6 +802,7 @@ async function handleCreateGroup() {
   if (!inserted) {
     showGroupSetupError((lastError && lastError.message) || 'Could not create group — try again.');
     createBtn.disabled = false;
+    createBtn.textContent = 'Create Group';
     return;
   }
 
@@ -777,8 +812,9 @@ async function handleCreateGroup() {
 
   if (memberError) {
     console.error('Join own group failed:', memberError);
-    showGroupSetupError(memberError.message);
+    showGroupSetupError(memberError.message || 'Group created, but joining it failed — try again.');
     createBtn.disabled = false;
+    createBtn.textContent = 'Create Group';
     return;
   }
 
@@ -798,8 +834,10 @@ async function handleJoinGroup() {
   }
 
   joinBtn.disabled = true;
+  joinBtn.textContent = 'Joining…';
   const { data, error } = await supabaseClient.rpc('join_group_by_code', { p_code: code });
   joinBtn.disabled = false;
+  joinBtn.textContent = 'Join Group';
 
   if (error) {
     showGroupSetupError(error.message || "Couldn't join that group.");
@@ -1218,7 +1256,28 @@ startBtn.addEventListener('click', () => {
     },
     (error) => {
       console.error('GPS error:', error);
-      setStatus('Error: ' + error.message, 'error');
+
+      // Standard GeolocationPositionError codes — mapped to what the
+      // person should actually do, not the browser's raw (often terse or
+      // inconsistent) message text.
+      const GPS_ERROR_MESSAGES = {
+        1: 'Location access denied — allow location for this site in your browser settings, then tap Start Trip again.',
+        2: "Couldn't get a location fix — check that location services / GPS are turned on for this device.",
+        3: 'Location request timed out — try again outdoors with a clear view of the sky.',
+      };
+      setStatus(GPS_ERROR_MESSAGES[error.code] || ('Location error — ' + (error.message || 'unknown') + '.'), 'error');
+
+      // Permission denial is terminal: watchPosition will never recover on
+      // its own, so leave the UI stuck on "Tracking…" with only Stop
+      // enabled would strand the person with no way to actually retry.
+      // (Position-unavailable/timeout can still resolve on a later fix, so
+      // only reset for the terminal case.)
+      if (error.code === 1) {
+        navigator.geolocation.clearWatch(watchId);
+        clearInterval(timerId);
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+      }
     },
     { enableHighAccuracy: true }
   );
@@ -1264,6 +1323,8 @@ stopBtn.addEventListener('click', () => {
 const authViewEl = document.getElementById('authView');
 const appViewEl = document.getElementById('appView');
 const logoutBtnEl = document.getElementById('logoutBtn');
+const guestBannerEl = document.getElementById('guestBanner');
+const saveAccountBtnEl = document.getElementById('saveAccountBtn');
 const authPanelEl = document.getElementById('authPanel');
 const authBodyEl = document.getElementById('authBody');
 const authFormEl = document.getElementById('authForm');
@@ -1277,12 +1338,25 @@ const authLoginEl = document.getElementById('authLogin');
 const authSignupEl = document.getElementById('authSignup');
 const authToggleEl = document.getElementById('authToggle');
 const authToggleTextEl = document.getElementById('authToggleText');
+const authCancelRowEl = document.getElementById('authCancelRow');
+const authCancelEl = document.getElementById('authCancel');
 
-let authMode = 'login';                 // 'login' | 'signup' — which button was pressed
+let authMode = 'login';                 // 'login' | 'signup' | 'save'
 let submittingAuth = false;
+let isAnonymousUser = false;            // mirrors session.user.is_anonymous
+// True only when the auth screen was opened from inside the app (Save my
+// account / Log in instead) — false for the very first "no session yet" or
+// "anonymous sign-in failed" screens, which have no app underneath to
+// cancel back to.
+let authScreenReturnable = false;
 
 const KEY_LOOKS_UNSET =
   !SUPABASE_PUBLISHABLE_KEY || SUPABASE_PUBLISHABLE_KEY.indexOf('PASTE_') === 0;
+
+// Idle (non-loading) label for whichever button is active in each mode —
+// the single source of truth setAuthMode() and the loading-state restore
+// in submitAuth() both read from.
+const AUTH_BUTTON_LABEL = { login: 'Log In', signup: 'Create Account', save: 'Save Account' };
 
 // --- Screen switching -----------------------------------------------------
 
@@ -1290,6 +1364,7 @@ function showAuthScreen() {
   appViewEl.hidden = true;
   logoutBtnEl.hidden = true;
   statusEl.hidden = true;         // the "Not tracking" pill belongs to the app
+  guestBannerEl.hidden = true;
   authViewEl.hidden = false;
 }
 
@@ -1298,6 +1373,11 @@ function showAppScreen() {
   appViewEl.hidden = false;
   logoutBtnEl.hidden = false;
   statusEl.hidden = false;
+  syncGuestBanner();
+}
+
+function syncGuestBanner() {
+  guestBannerEl.hidden = !isAnonymousUser;
 }
 
 // --- Form copy + the login/signup toggle --------------------------------
@@ -1305,36 +1385,46 @@ function showAppScreen() {
 function setAuthMode(mode) {
   authMode = mode;
   const isLogin = mode === 'login';
+  const isSave = mode === 'save';
 
-  authTitleEl.textContent = isLogin ? 'Welcome back' : 'Create your account';
-  authSubEl.textContent = isLogin
-    ? 'Sign in to your driving log.'
-    : 'Track drives and join a group with friends.';
+  if (isSave) {
+    authTitleEl.textContent = 'Save your account';
+    authSubEl.textContent = 'Keep your trips if you switch devices or clear your browser.';
+  } else {
+    authTitleEl.textContent = isLogin ? 'Welcome back' : 'Create your account';
+    authSubEl.textContent = isLogin
+      ? 'Sign in to your driving log.'
+      : 'Track drives and join a group with friends.';
+  }
   authToggleTextEl.textContent = isLogin
     ? "Don't have an account?"
     : 'Already have an account?';
-  authToggleEl.textContent = isLogin ? 'Sign up' : 'Log in';
+  authToggleEl.textContent = isLogin ? 'Sign up' : (isSave ? 'Log in instead' : 'Log in');
 
-  // Only one primary action is ever visible — login (amber) or create
-  // account (teal) — instead of both buttons always shown and recolored.
+  // Only one primary action is ever visible — Log In stays login-only;
+  // the other button is repurposed for both "Create Account" (signup) and
+  // "Save Account" (save), since those two are mutually exclusive with login.
   authLoginEl.hidden = !isLogin;
   authSignupEl.hidden = isLogin;
+  authSignupEl.textContent = AUTH_BUTTON_LABEL[isSave ? 'save' : 'signup'];
+  authSignupEl.className = 'btn btn--block ' + (isSave ? 'btn--start' : 'btn--secondary');
 
   // Also flip `type` so exactly one button is ever type="submit". A form's
   // implicit-submission "default button" (Enter key, or keyboard-activated
   // submit) is the first submit button in DOM order — `hidden` alone does
-  // NOT disqualify it. With both left as type="submit", submitting the Sign
-  // Up form via Enter would silently activate the hidden Log In button
-  // instead, leaving authMode stuck on 'login' and running
-  // signInWithPassword() against a brand-new account (surfacing as "Wrong
-  // email or password" on the Sign Up screen).
+  // NOT disqualify it. With both left as type="submit", submitting via
+  // Enter would silently activate the hidden button instead, running the
+  // wrong Supabase call for the visible mode.
   authLoginEl.type = isLogin ? 'submit' : 'button';
   authSignupEl.type = isLogin ? 'button' : 'submit';
 
-  authPanelEl.classList.toggle('auth--signup', !isLogin);
+  // Amber (the "keep/positive" accent) for login and save, teal ("new
+  // identity") only for actually creating a brand-new account.
+  authPanelEl.classList.toggle('auth--signup', mode === 'signup');
+  authCancelRowEl.hidden = !authScreenReturnable;
 
   authPasswordEl.setAttribute('autocomplete', isLogin ? 'current-password' : 'new-password');
-  authDisplayNameEl.hidden = isLogin; // only asked for at signup
+  authDisplayNameEl.hidden = isLogin; // asked for at signup and save
 
   hideAuthMessage();
 }
@@ -1361,8 +1451,11 @@ function friendlyAuthError(error, mode) {
   const msg = (error && error.message ? error.message : '').toLowerCase();
 
   if (msg.includes('already registered') || msg.includes('already been registered') ||
-      msg.includes('user already exists')) {
-    return 'That email is already in use — try logging in instead.';
+      msg.includes('already in use') || msg.includes('user already exists') ||
+      msg.includes('email exists') || msg.includes('email address already')) {
+    return mode === 'save'
+      ? 'That email is already in use by another account — try logging in instead of saving.'
+      : 'That email is already in use — try logging in instead.';
   }
   // "Invalid login credentials" only ever comes from signInWithPassword —
   // signUp() has no equivalent error, so this check is login-only.
@@ -1416,9 +1509,18 @@ async function submitAuth() {
     return;
   }
 
+  // Captured once, up front: if a success branch below calls setAuthMode()
+  // to switch modes mid-flow (signup-with-no-session falling back to
+  // login), that call already sets the correct idle label on its own —
+  // the `finally` restore below must not clobber that with a stale label
+  // for a mode we've since left.
+  const modeAtSubmit = authMode;
+  const activeBtn = modeAtSubmit === 'login' ? authLoginEl : authSignupEl;
+
   submittingAuth = true;
   authLoginEl.disabled = true;
   authSignupEl.disabled = true;
+  activeBtn.textContent = { login: 'Logging in…', signup: 'Creating account…', save: 'Saving…' }[modeAtSubmit];
 
   try {
     const { data, error } =
@@ -1434,7 +1536,13 @@ async function submitAuth() {
               emailRedirectTo: location.href,
             },
           })
-        : await supabaseClient.auth.signInWithPassword({ email, password });
+        : authMode === 'save'
+          ? await supabaseClient.auth.updateUser({
+              email,
+              password,
+              data: { display_name: displayName || undefined },
+            })
+          : await supabaseClient.auth.signInWithPassword({ email, password });
 
     if (error) {
       showAuthMessage(friendlyAuthError(error, authMode));
@@ -1449,20 +1557,43 @@ async function submitAuth() {
       return;
     }
 
-    // Success with a session: onAuthStateChange() will swap to the app.
+    if (authMode === 'save') {
+      // Stay on this screen (rather than auto-returning to the app) so the
+      // confirmation is actually seen — same reasoning as the signup
+      // "check your email" case above. onAuthStateChange's USER_UPDATED
+      // event will refresh isAnonymousUser/the guest banner once Supabase
+      // reflects the change, which may be immediate or only after the
+      // emailed confirmation is clicked, depending on this project's
+      // "Secure email change" setting — this message is accurate either way.
+      authFormEl.reset();
+      showAuthMessage(
+        'Account saved. If asked, check your email to confirm — your trips stay right where they are either way.',
+        'info'
+      );
+      return;
+    }
+
+    // Success with a session (login/signup): onAuthStateChange() will swap
+    // to the app screen.
   } catch (err) {
     showAuthMessage('Network error — could not reach Supabase.');
   } finally {
     submittingAuth = false;
     authLoginEl.disabled = false;
     authSignupEl.disabled = false;
+    // Only restore here if the mode is still what it was when this submit
+    // started — if a branch above already called setAuthMode() to switch
+    // modes, that call set the correct label itself and this must not
+    // overwrite it with a stale one for the mode we've left.
+    if (authMode === modeAtSubmit) {
+      activeBtn.textContent = AUTH_BUTTON_LABEL[modeAtSubmit];
+    }
   }
 }
 
 // --- Wiring ------------------------------------------------------------------
-
-authLoginEl.addEventListener('click', () => { authMode = 'login'; });
-authSignupEl.addEventListener('click', () => { authMode = 'signup'; });
+// authMode is only ever changed via setAuthMode() — it already handles
+// which button is visible/submittable, so nothing here sets it directly.
 
 authFormEl.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -1471,8 +1602,7 @@ authFormEl.addEventListener('submit', (e) => {
 
 // Crossfade the title/fields/button on mode switch — same 160ms
 // exit-then-enter pattern showView() uses for tab switching.
-authToggleEl.addEventListener('click', () => {
-  const nextMode = authMode === 'login' ? 'signup' : 'login';
+function crossfadeToAuthMode(nextMode) {
   authBodyEl.classList.add('auth__body--fade');
   setTimeout(() => {
     setAuthMode(nextMode);
@@ -1480,9 +1610,41 @@ authToggleEl.addEventListener('click', () => {
       requestAnimationFrame(() => authBodyEl.classList.remove('auth__body--fade'));
     });
   }, 160);
+}
+
+authToggleEl.addEventListener('click', () => {
+  // From 'save', the toggle always offers logging into a different,
+  // already-existing account; login/signup just cycle between each other.
+  const nextMode = authMode === 'save' ? 'login' : (authMode === 'login' ? 'signup' : 'login');
+  crossfadeToAuthMode(nextMode);
+});
+
+// Opened from inside the app (guest banner) — reachable only while
+// anonymous, since a permanent account has nothing left to "save".
+saveAccountBtnEl.addEventListener('click', () => {
+  authScreenReturnable = true;
+  authDisplayNameEl.value = (myProfile && myProfile.display_name) || '';
+  setAuthMode('save');
+  showAuthScreen();
+});
+
+// Returns to the app without changing anything — only shown when this
+// screen was reached from inside the app (see authScreenReturnable).
+authCancelEl.addEventListener('click', () => {
+  hideAuthMessage();
+  showAppScreen();
 });
 
 logoutBtnEl.addEventListener('click', async () => {
+  // An anonymous session has no password/email backing it — signing out
+  // destroys that identity for good, taking every trip logged under it
+  // with it. A permanent (saved) account has no such risk.
+  if (isAnonymousUser) {
+    const proceed = confirm(
+      "You're in a guest session — logging out will permanently lose this device's trip data unless you save your account first. Log out anyway?"
+    );
+    if (!proceed) return;
+  }
   await supabaseClient.auth.signOut(); // onAuthStateChange() handles the UI
 });
 
@@ -1490,6 +1652,8 @@ logoutBtnEl.addEventListener('click', async () => {
 // group membership + realtime channel, trip history.
 async function loadAppData(session) {
   currentUserId = session.user.id;
+  isAnonymousUser = !!session.user.is_anonymous;
+  syncGuestBanner();
   await ensureProfile(session);
   await loadMyGroup();
   await onGroupChanged();
@@ -1500,6 +1664,7 @@ async function loadAppData(session) {
 // Tear down everything that only makes sense while logged in.
 function clearAppData() {
   currentUserId = null;
+  isAnonymousUser = false;
   myGroup = null;
   groupMembersCache = [];
   myProfile = null;
@@ -1514,19 +1679,41 @@ async function initAuth() {
   if (session) {
     showAppScreen();
     await loadAppData(session);
-  } else {
+  } else if (KEY_LOOKS_UNSET) {
     showAuthScreen();
-    if (KEY_LOOKS_UNSET) {
-      showAuthMessage('Add your Supabase publishable key in script.js to enable login.', 'info');
+    showAuthMessage('Add your Supabase publishable key in script.js to enable login.', 'info');
+  } else {
+    // No session at all — start a guest session automatically instead of
+    // gating on a login/signup form, so people can start tracking
+    // immediately. Requires Anonymous Sign-Ins enabled in the Supabase
+    // dashboard (Authentication -> Sign In / Providers -> Anonymous
+    // Sign-Ins) — falls back to the manual login/signup screen below if
+    // that's off, or the call fails for any other reason.
+    const { error } = await supabaseClient.auth.signInAnonymously();
+    if (error) {
+      showAuthScreen();
+      showAuthMessage(
+        "Guest access isn't available right now — log in or create an account instead.",
+        'info'
+      );
     }
+    // On success, onAuthStateChange below fires with the new session and
+    // takes it from there.
   }
 
-  // Fires on login, logout, token refresh, and once on load.
-  supabaseClient.auth.onAuthStateChange((_event, session) => {
+  // Fires on login, logout, token refresh, guest sign-in, and once on load.
+  supabaseClient.auth.onAuthStateChange((event, session) => {
     if (session) {
-      hideAuthMessage();
-      authFormEl.reset();
-      showAppScreen();
+      // USER_UPDATED fires after updateUser() (the "Save my account"
+      // flow) — that flow deliberately stays on the auth screen to show
+      // its own success/error message, so this must not yank the screen
+      // back to the app or wipe the message/form out from under it. Data
+      // (profile, isAnonymousUser, the guest banner) still refreshes.
+      if (event !== 'USER_UPDATED') {
+        hideAuthMessage();
+        authFormEl.reset();
+        showAppScreen();
+      }
       loadAppData(session);
     } else {
       clearAppData();
