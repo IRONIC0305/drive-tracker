@@ -1412,11 +1412,6 @@ async function submitAuth() {
   authLoginEl.disabled = true;
   authSignupEl.disabled = true;
 
-  // TEMP DEBUG — remove once the signup bug is confirmed fixed. Confirms
-  // what's actually being sent and which branch (signUp vs
-  // signInWithPassword) is about to run.
-  console.log('[auth] submitting', { authMode, email, passwordLength: password.length });
-
   try {
     const { data, error } =
       authMode === 'signup'
@@ -1434,8 +1429,6 @@ async function submitAuth() {
         : await supabaseClient.auth.signInWithPassword({ email, password });
 
     if (error) {
-      // TEMP DEBUG — remove once the signup bug is confirmed fixed.
-      console.error('[auth] raw Supabase error', { authMode, error });
       showAuthMessage(friendlyAuthError(error, authMode));
       return;
     }
