@@ -816,6 +816,18 @@ body {
   border-color: var(--muted);
 }
 
+/* Signup's primary action — same solid treatment as .btn--start, in the
+   app's secondary (teal) accent instead of amber, so "create account"
+   reads as a distinct action rather than a recolored "log in". */
+.btn--secondary {
+  background: var(--secondary);
+  color: #16181C;
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background: #74B3C0;
+}
+
 .btn--sm {
   flex: none;
   font-size: 0.8rem;
@@ -836,6 +848,25 @@ body {
 
 .auth {
   margin-top: 8px;
+  /* Amber = returning driver, teal = new one — the same accent grammar
+     .live-pill and .group__code already use elsewhere in the app. */
+  border-left: 3px solid var(--accent);
+  transition: border-color 0.2s ease;
+}
+
+.auth--signup {
+  border-left-color: var(--secondary);
+}
+
+/* Crossfade the title/fields/button when switching Log in <-> Sign up —
+   the same opacity transition .view uses for tab switching, reused here
+   instead of inventing a second motion idiom. */
+.auth__body {
+  transition: opacity 0.16s ease;
+}
+
+.auth__body--fade {
+  opacity: 0;
 }
 
 .auth__title {

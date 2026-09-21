@@ -1264,6 +1264,8 @@ stopBtn.addEventListener('click', () => {
 const authViewEl = document.getElementById('authView');
 const appViewEl = document.getElementById('appView');
 const logoutBtnEl = document.getElementById('logoutBtn');
+const authPanelEl = document.getElementById('authPanel');
+const authBodyEl = document.getElementById('authBody');
 const authFormEl = document.getElementById('authForm');
 const authDisplayNameEl = document.getElementById('authDisplayName');
 const authEmailEl = document.getElementById('authEmail');
@@ -1304,18 +1306,32 @@ function setAuthMode(mode) {
   authMode = mode;
   const isLogin = mode === 'login';
 
-  authTitleEl.textContent = isLogin ? 'Log in' : 'Sign up';
+  authTitleEl.textContent = isLogin ? 'Welcome back' : 'Create your account';
   authSubEl.textContent = isLogin
     ? 'Sign in to your driving log.'
-    : 'Create an account to start logging drives.';
+    : 'Track drives and join a group with friends.';
   authToggleTextEl.textContent = isLogin
     ? "Don't have an account?"
     : 'Already have an account?';
   authToggleEl.textContent = isLogin ? 'Sign up' : 'Log in';
 
-  // Emphasise (amber) whichever button matches the current mode.
-  authLoginEl.className = 'btn btn--block ' + (isLogin ? 'btn--start' : 'btn--ghost');
-  authSignupEl.className = 'btn btn--block ' + (isLogin ? 'btn--ghost' : 'btn--start');
+  // Only one primary action is ever visible — login (amber) or create
+  // account (teal) — instead of both buttons always shown and recolored.
+  authLoginEl.hidden = !isLogin;
+  authSignupEl.hidden = isLogin;
+
+  // Also flip `type` so exactly one button is ever type="submit". A form's
+  // implicit-submission "default button" (Enter key, or keyboard-activated
+  // submit) is the first submit button in DOM order — `hidden` alone does
+  // NOT disqualify it. With both left as type="submit", submitting the Sign
+  // Up form via Enter would silently activate the hidden Log In button
+  // instead, leaving authMode stuck on 'login' and running
+  // signInWithPassword() against a brand-new account (surfacing as "Wrong
+  // email or password" on the Sign Up screen).
+  authLoginEl.type = isLogin ? 'submit' : 'button';
+  authSignupEl.type = isLogin ? 'button' : 'submit';
+
+  authPanelEl.classList.toggle('auth--signup', !isLogin);
 
   authPasswordEl.setAttribute('autocomplete', isLogin ? 'current-password' : 'new-password');
   authDisplayNameEl.hidden = isLogin; // only asked for at signup
@@ -1338,14 +1354,19 @@ function hideAuthMessage() {
 }
 
 // Map Supabase's raw error text to something a person can act on.
-function friendlyAuthError(error) {
+// `mode` guards against ever showing a login-specific message on the
+// signup screen (or vice versa) even if the wrong Supabase call somehow
+// runs again in the future — see the type="submit" fix in setAuthMode().
+function friendlyAuthError(error, mode) {
   const msg = (error && error.message ? error.message : '').toLowerCase();
 
   if (msg.includes('already registered') || msg.includes('already been registered') ||
       msg.includes('user already exists')) {
     return 'That email is already in use — try logging in instead.';
   }
-  if (msg.includes('invalid login credentials')) {
+  // "Invalid login credentials" only ever comes from signInWithPassword —
+  // signUp() has no equivalent error, so this check is login-only.
+  if (mode === 'login' && msg.includes('invalid login credentials')) {
     return 'Wrong email or password.';
   }
   if (msg.includes('email not confirmed')) {
@@ -1391,6 +1412,11 @@ async function submitAuth() {
   authLoginEl.disabled = true;
   authSignupEl.disabled = true;
 
+  // TEMP DEBUG — remove once the signup bug is confirmed fixed. Confirms
+  // what's actually being sent and which branch (signUp vs
+  // signInWithPassword) is about to run.
+  console.log('[auth] submitting', { authMode, email, passwordLength: password.length });
+
   try {
     const { data, error } =
       authMode === 'signup'
@@ -1408,7 +1434,9 @@ async function submitAuth() {
         : await supabaseClient.auth.signInWithPassword({ email, password });
 
     if (error) {
-      showAuthMessage(friendlyAuthError(error));
+      // TEMP DEBUG — remove once the signup bug is confirmed fixed.
+      console.error('[auth] raw Supabase error', { authMode, error });
+      showAuthMessage(friendlyAuthError(error, authMode));
       return;
     }
 
@@ -1440,8 +1468,17 @@ authFormEl.addEventListener('submit', (e) => {
   submitAuth();
 });
 
+// Crossfade the title/fields/button on mode switch — same 160ms
+// exit-then-enter pattern showView() uses for tab switching.
 authToggleEl.addEventListener('click', () => {
-  setAuthMode(authMode === 'login' ? 'signup' : 'login');
+  const nextMode = authMode === 'login' ? 'signup' : 'login';
+  authBodyEl.classList.add('auth__body--fade');
+  setTimeout(() => {
+    setAuthMode(nextMode);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => authBodyEl.classList.remove('auth__body--fade'));
+    });
+  }, 160);
 });
 
 logoutBtnEl.addEventListener('click', async () => {

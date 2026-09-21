@@ -17,23 +17,25 @@
 
     <!-- ============ Auth screen (shown only when logged out) ============ -->
     <section id="authView" hidden>
-      <div class="panel auth">
-        <h2 class="auth__title" id="authTitle">Log in</h2>
-        <p class="auth__sub" id="authSub">Sign in to your driving log.</p>
+      <div class="panel auth" id="authPanel">
+        <div class="auth__body" id="authBody">
+          <h2 class="auth__title" id="authTitle">Welcome back</h2>
+          <p class="auth__sub" id="authSub">Sign in to your driving log.</p>
 
-        <form id="authForm" novalidate>
-          <input class="field" id="authDisplayName" type="text" placeholder="Display name (optional)"
-                 autocomplete="name" maxlength="30" hidden>
-          <input class="field" id="authEmail" type="email" placeholder="Email"
-                 autocomplete="email" required>
-          <input class="field" id="authPassword" type="password" placeholder="Password"
-                 autocomplete="current-password" required minlength="6">
+          <form id="authForm" novalidate>
+            <input class="field" id="authDisplayName" type="text" placeholder="Display name (optional)"
+                   autocomplete="name" maxlength="30" hidden>
+            <input class="field" id="authEmail" type="email" placeholder="Email"
+                   autocomplete="email" required>
+            <input class="field" id="authPassword" type="password" placeholder="Password"
+                   autocomplete="current-password" required minlength="6">
 
-          <p class="auth__error" id="authError" hidden></p>
+            <p class="auth__error" id="authError" hidden></p>
 
-          <button class="btn btn--start btn--block" id="authLogin" type="submit">Log In</button>
-          <button class="btn btn--ghost btn--block" id="authSignup" type="submit">Sign Up</button>
-        </form>
+            <button class="btn btn--start btn--block" id="authLogin" type="submit">Log In</button>
+            <button class="btn btn--secondary btn--block" id="authSignup" type="submit" hidden>Create Account</button>
+          </form>
+        </div>
 
         <p class="auth__toggle">
           <span id="authToggleText">Don't have an account?</span>
