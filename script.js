@@ -317,6 +317,13 @@ function showView(name) {
         if (tripRouteBounds) map.fitBounds(tripRouteBounds, { padding: [30, 30] });
       }, 120);
     }
+
+    // Pull fresh totals every time the tab is opened — a groupmate's trip
+    // saved while you were elsewhere wouldn't otherwise show up until some
+    // other refresh trigger (your own trip, a range change, rejoining).
+    if (name === 'leaderboard') {
+      loadGroupLeaderboard();
+    }
   }, 160);
 }
 
@@ -675,6 +682,7 @@ function renderGroupHome() {
         <span class="group__code-label">Invite code</span>
         <span class="group__code">${myGroup.invite_code}</span>
         <button class="btn btn--ghost btn--sm" id="copyCodeBtn" type="button">Copy code</button>
+        <button class="btn btn--start btn--sm" id="inviteBtn" type="button">Invite</button>
       </div>
     </div>
 
@@ -686,6 +694,7 @@ function renderGroupHome() {
     <button class="btn btn--stop btn--block" id="leaveBtn" type="button" style="margin-top: 14px;">Leave Group</button>`;
 
   groupBodyEl.querySelector('#copyCodeBtn').addEventListener('click', handleCopyCode);
+  groupBodyEl.querySelector('#inviteBtn').addEventListener('click', handleInvite);
   groupBodyEl.querySelector('#leaveBtn').addEventListener('click', handleLeaveGroup);
 }
 
@@ -825,6 +834,54 @@ function handleCopyCode() {
     btn.textContent = ok ? 'Copied' : 'Press ⌘C';
     setTimeout(() => { btn.textContent = 'Copy code'; }, 1500);
   });
+}
+
+// Invite a new person to the group — native share sheet where available
+// (mobile Safari/Chrome), falling back to copying a ready-to-send message.
+// The link carries ?join=CODE, which consumeInviteLinkIfAny() picks up and
+// auto-joins on the other end — no manual code entry needed.
+function handleInvite() {
+  const btn = groupBodyEl.querySelector('#inviteBtn');
+  const link = buildInviteLink(myGroup.invite_code);
+  const message = `Join my group "${myGroup.name}" on Drive Tracker!`;
+
+  if (navigator.share) {
+    navigator.share({ title: 'Drive Tracker invite', text: message, url: link }).catch(() => {
+      // User cancelled the share sheet or it failed silently — no fallback needed.
+    });
+    return;
+  }
+
+  copyText(`${message} ${link}`).then((ok) => {
+    btn.textContent = ok ? 'Invite copied' : 'Press ⌘C';
+    setTimeout(() => { btn.textContent = 'Invite'; }, 1500);
+  });
+}
+
+function buildInviteLink(code) {
+  return `${location.origin}${location.pathname}?join=${encodeURIComponent(code)}`;
+}
+
+// Consumes a `?join=CODE` link. Called once app data (and the group panel
+// DOM) is ready. Strips the param right away so the extra onAuthStateChange
+// firing Supabase does on initial load doesn't process it twice.
+function consumeInviteLinkIfAny() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('join');
+  if (!code) return;
+
+  params.delete('join');
+  const rest = params.toString();
+  history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : ''));
+
+  if (myGroup) return; // already in a group — the app only supports being in one at a time
+
+  showView('group');
+  const codeInput = groupBodyEl.querySelector('#joinCode');
+  if (codeInput) {
+    codeInput.value = code.toUpperCase();
+    handleJoinGroup();
+  }
 }
 
 // Clipboard write with a fallback for insecure (file://) contexts.
@@ -1321,7 +1378,13 @@ async function submitAuth() {
         ? await supabaseClient.auth.signUp({
             email,
             password,
-            options: { data: { display_name: displayName || undefined } },
+            options: {
+              data: { display_name: displayName || undefined },
+              // Preserves ?join=CODE across the "confirm your email" redirect,
+              // so clicking an invite link, signing up, then confirming still
+              // lands back on the link that auto-joins the group.
+              emailRedirectTo: location.href,
+            },
           })
         : await supabaseClient.auth.signInWithPassword({ email, password });
 
@@ -1374,6 +1437,7 @@ async function loadAppData(session) {
   await loadMyGroup();
   await onGroupChanged();
   loadTripHistory();
+  consumeInviteLinkIfAny();
 }
 
 // Tear down everything that only makes sense while logged in.
