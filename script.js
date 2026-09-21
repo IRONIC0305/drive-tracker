@@ -1378,8 +1378,16 @@ function friendlyAuthError(error, mode) {
   if (msg.includes('unable to validate email address') || msg.includes('invalid format')) {
     return "That doesn't look like a valid email address.";
   }
-  if (msg.includes('for security purposes') || msg.includes('rate limit')) {
+  // Two different Supabase limits, with very different real durations —
+  // previously both showed the same "wait a minute" text, which is only
+  // accurate for the short per-action cooldown below. The shared project
+  // email quota resets on a much longer cycle (commonly ~hourly), and
+  // Supabase's response carries no Retry-After to give an exact time.
+  if (msg.includes('for security purposes')) {
     return 'Too many attempts — wait a minute and try again.';
+  }
+  if (msg.includes('rate limit')) {
+    return "This project has hit its email sending limit — it can take up to an hour to reset. If you already have an account, try logging in instead.";
   }
   return (error && error.message) || 'Something went wrong. Try again.';
 }
