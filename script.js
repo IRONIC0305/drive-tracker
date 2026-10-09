@@ -422,14 +422,26 @@ function centerMapOnUser() {
   );
 }
 
-// A small round pin with initials + a name label, used for group members and "You".
-function makePin(name, color) {
-  const initials = name
-    .split(/\s+/)
-    .map((word) => word[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+// Simple top-down car silhouette: a rounded body with a darker rectangle
+// near the front (windshield) and another near the back (rear window), so
+// which way it's rotated to face is actually legible at marker size.
+const CAR_SVG =
+  '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">' +
+    '<rect x="7" y="2" width="10" height="20" rx="4" />' +
+    '<rect x="8.5" y="6" width="7" height="4" rx="1" fill="rgba(0,0,0,0.35)" />' +
+    '<rect x="8.5" y="14" width="7" height="4" rx="1" fill="rgba(0,0,0,0.35)" />' +
+  '</svg>';
+
+// A car-shaped marker, used for group members, "You", and a trip's
+// start/finish points. `headingDeg` rotates it — 0/null points north (up),
+// clockwise from there; live markers pass the GPS heading reading, trip
+// start/finish markers pass a bearing computed from the route's own points
+// (see bearingDegrees) since a finished trip has no live heading. `name`,
+// when given, renders a label underneath — used for live position markers,
+// omitted for start/finish so the map doesn't get cluttered with "Start"/
+// "Finish" text (those stay reachable via the marker's popup instead).
+function makeCarIcon(color, headingDeg, name) {
+  const rotation = Number.isFinite(headingDeg) ? headingDeg : 0;
 
   return L.divIcon({
     className: 'map-pin-wrap',
@@ -437,13 +449,27 @@ function makePin(name, color) {
     iconAnchor: [17, 17],
     html:
       `<span class="map-pin" style="--pin:${color}">` +
-        `<span class="map-pin__dot">${initials}</span>` +
-        `<span class="map-pin__label">${name}</span>` +
+        `<span class="map-pin__car" style="transform: rotate(${rotation}deg)">${CAR_SVG}</span>` +
+        (name ? `<span class="map-pin__label">${name}</span>` : '') +
       `</span>`,
   });
 }
 
-// Draw the just-finished trip: connected line + green start / red end markers.
+// Initial compass bearing (0-360, clockwise from north) from point A to B —
+// used to orient a completed trip's start/finish car icons, since those
+// have no live GPS heading to read.
+function bearingDegrees(lat1, lng1, lat2, lng2) {
+  const toRad = (d) => d * Math.PI / 180;
+  const toDeg = (r) => r * 180 / Math.PI;
+  const y = Math.sin(toRad(lng2 - lng1)) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+            Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lng2 - lng1));
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+// Draw the just-finished trip: connected line + car icons at the start
+// (amber) and finish (off-white), each facing the direction the trip
+// actually started/ended in.
 function renderTripRoute() {
   ensureMap();
   routeLayer.clearLayers();
@@ -452,19 +478,23 @@ function renderTripRoute() {
   if (tripPoints.length < 2) return;
 
   const latlngs = tripPoints.map((p) => [p.lat, p.lng]);
+  const last = tripPoints.length - 1;
 
   const line = L.polyline(latlngs, { color: '#E0A542', weight: 4 });
   routeLayer.addLayer(line);
 
+  const startBearing = bearingDegrees(
+    tripPoints[0].lat, tripPoints[0].lng, tripPoints[1].lat, tripPoints[1].lng
+  );
+  const finishBearing = bearingDegrees(
+    tripPoints[last - 1].lat, tripPoints[last - 1].lng, tripPoints[last].lat, tripPoints[last].lng
+  );
+
   routeLayer.addLayer(
-    L.circleMarker(latlngs[0], {
-      radius: 8, color: '#16181C', weight: 2, fillColor: '#E0A542', fillOpacity: 1,
-    }).bindPopup('Start')
+    L.marker(latlngs[0], { icon: makeCarIcon('#E0A542', startBearing) }).bindPopup('Start')
   );
   routeLayer.addLayer(
-    L.circleMarker(latlngs[latlngs.length - 1], {
-      radius: 8, color: '#16181C', weight: 2, fillColor: '#EDEDEA', fillOpacity: 1,
-    }).bindPopup('Finish')
+    L.marker(latlngs[last], { icon: makeCarIcon('#EDEDEA', finishBearing) }).bindPopup('Finish')
   );
 
   tripRouteBounds = line.getBounds();
@@ -502,10 +532,12 @@ let myGroup = null;            // { id, name, invite_code, created_by }, or null
 let groupMembersCache = [];    // [{ profile: { id, display_name, color }, isMe }]
 let presenceState = {};        // userId -> true, who currently has sharing ON
 let friendPositions = {};      // userId -> [lat, lng], last broadcast position received
+let friendHeadings = {};       // userId -> degrees (0-360) or null, last known heading
 let friendMarkers = {};        // userId -> Leaflet marker
 let myGroupChannel = null;     // the Realtime channel for the current group
 let isSharingLocation = false; // mirrors YOUR toggle
 let myLivePos = null;          // your own last GPS fix while sharing
+let myHeading = null;          // your own last known heading (degrees), while sharing
 let shareWatchId = null;       // geolocation watch dedicated to broadcasting
 let lastBroadcastAt = 0;
 
@@ -608,17 +640,24 @@ function rebuildFriendMarkers() {
   visibleGroupMembers().forEach((profile) => {
     const pos = friendPositions[profile.id];
     if (!pos) return; // present but no GPS fix received yet
-    const marker = L.marker(pos, { icon: makePin(profile.display_name, profile.color) }).addTo(friendLayer);
+    const marker = L.marker(pos, {
+      icon: makeCarIcon(profile.color, friendHeadings[profile.id], profile.display_name),
+    }).addTo(friendLayer);
     friendMarkers[profile.id] = marker;
   });
 }
 
 // A single broadcast tick from a group member — cheaper than a full rebuild.
 function updateFriendMarker(payload) {
-  const { user_id: userId, lat, lng } = payload;
+  const { user_id: userId, lat, lng, heading } = payload;
   if (!userId || userId === currentUserId) return; // ignore malformed/self payloads
 
   friendPositions[userId] = [lat, lng];
+  // Keep the last known heading when this fix doesn't have one (e.g.
+  // stopped at a light) instead of snapping the car back to "north".
+  if (Number.isFinite(heading) && heading >= 0) {
+    friendHeadings[userId] = heading;
+  }
   if (!presenceState[userId]) return; // not currently marked as sharing
 
   const member = groupMembersCache.find((m) => m.profile.id === userId);
@@ -626,12 +665,12 @@ function updateFriendMarker(payload) {
 
   if (!friendLayer) return;
 
+  const icon = makeCarIcon(member.profile.color, friendHeadings[userId], member.profile.display_name);
   if (friendMarkers[userId]) {
     friendMarkers[userId].setLatLng([lat, lng]);
+    friendMarkers[userId].setIcon(icon); // keeps the rotation in sync on every tick
   } else {
-    friendMarkers[userId] = L.marker([lat, lng], {
-      icon: makePin(member.profile.display_name, member.profile.color),
-    }).addTo(friendLayer);
+    friendMarkers[userId] = L.marker([lat, lng], { icon }).addTo(friendLayer);
   }
 }
 
@@ -669,6 +708,7 @@ function leaveGroupChannel() {
   myGroupChannel = null;
   presenceState = {};
   friendPositions = {};
+  friendHeadings = {};
   friendMarkers = {};
   if (friendLayer) friendLayer.clearLayers();
 }
@@ -1032,10 +1072,12 @@ function updateMeMarker() {
     return;
   }
 
+  const icon = makeCarIcon('#E0A542', myHeading, 'You');
   if (meMarker) {
     meMarker.setLatLng(myLivePos);
+    meMarker.setIcon(icon); // keeps the rotation in sync on every fix
   } else {
-    meMarker = L.marker(myLivePos, { icon: makePin('You', '#E0A542') }).addTo(map);
+    meMarker = L.marker(myLivePos, { icon }).addTo(map);
   }
 }
 
@@ -1050,6 +1092,11 @@ function startLocationBroadcast() {
       const lat = position.coords.latitude;
       const lng = position.coords.longitude;
       myLivePos = [lat, lng];
+      // Keep the last known heading when this fix doesn't have one (e.g.
+      // stopped at a light) instead of snapping the car back to "north".
+      if (Number.isFinite(position.coords.heading) && position.coords.heading >= 0) {
+        myHeading = position.coords.heading;
+      }
       updateMeMarker();
 
       const now = Date.now();
@@ -1060,7 +1107,7 @@ function startLocationBroadcast() {
         myGroupChannel.send({
           type: 'broadcast',
           event: 'location',
-          payload: { user_id: currentUserId, lat, lng, ts: now },
+          payload: { user_id: currentUserId, lat, lng, heading: myHeading, ts: now },
         });
       }
     },
@@ -1077,6 +1124,7 @@ function stopLocationBroadcast() {
     shareWatchId = null;
   }
   myLivePos = null;
+  myHeading = null;
   updateMeMarker();
 }
 

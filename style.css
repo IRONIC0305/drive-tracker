@@ -587,7 +587,7 @@ body {
   color: var(--muted);
 }
 
-/* Friend / "You" markers (Leaflet divIcon) */
+/* Friend / "You" / trip start-finish markers (Leaflet divIcon) */
 .map-pin-wrap {
   background: transparent;
   border: 0;
@@ -600,19 +600,24 @@ body {
   height: 34px;
 }
 
-.map-pin__dot {
+/* Top-down car icon — colored per-marker via --pin, rotated by JS
+   (makeCarIcon) to face the GPS heading or the trip's start/finish
+   bearing. The drop-shadow keeps it readable over light map tiles without
+   needing a solid circular backing plate. */
+.map-pin__car {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 34px;
   height: 34px;
-  border-radius: 50%;
-  background: var(--pin);
-  color: #16181C;
-  font-family: var(--font-num);
-  font-size: 0.76rem;
-  font-weight: 700;
-  border: 2px solid var(--bg);
+  color: var(--pin);
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
+  transition: transform 0.3s ease;
+}
+
+.map-pin__car svg {
+  width: 22px;
+  height: 22px;
 }
 
 .map-pin__label {
