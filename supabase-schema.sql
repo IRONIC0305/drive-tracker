@@ -239,3 +239,30 @@ create policy "group members can use their group's realtime channel"
   with check (
     public.is_group_member((split_part(realtime.topic(), ':', 2))::uuid, auth.uid())
   );
+
+-- ----------------------------------------------------------------------------
+-- 6. Realtime transport for group membership changes — Postgres Changes
+-- ----------------------------------------------------------------------------
+-- Unlike live location, membership changes are rare (someone joins/leaves)
+-- and already live in a durable table, so Postgres Changes — not
+-- Broadcast — is the right fit: the client just needs to know "something
+-- changed, re-fetch the member list," not a high-frequency data stream.
+--
+-- This table must be added to the supabase_realtime publication for those
+-- change events to fire at all. RLS on group_members (section 3 above)
+-- already scopes who receives which rows' change events, same as any
+-- other read. Wrapped in a check since, unlike `create policy`,
+-- `alter publication ... add table` errors (doesn't no-op) if the table
+-- is already a member — this keeps the file safe to re-run.
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'group_members'
+  ) then
+    alter publication supabase_realtime add table public.group_members;
+  end if;
+end $$;

@@ -26,6 +26,20 @@ const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_AqA40yERnQIfhGnJvebYzQ_A91uk-9X
 
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
+// Supabase redirects an email confirmation / email-change link back here
+// with a `type` in the URL hash or query string (exact shape depends on
+// which auth flow is active) — read it NOW, synchronously, before the
+// Supabase client's own async init has a chance to consume and clean up
+// the URL. Used later (once a session actually loads) to show an honest
+// "you're confirmed" banner instead of silently landing on an otherwise
+// unremarkable Tracker screen, which is what prompted this in the first
+// place — it was never actually a crash, just no acknowledgment at all.
+let pendingAuthRedirectType = (() => {
+  const hashParams = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+  const queryParams = new URLSearchParams(location.search);
+  return hashParams.get('type') || queryParams.get('type') || null;
+})();
+
 let watchId = null;
 let tripPoints = [];
 let startTime = null;
@@ -357,6 +371,12 @@ function showView(name) {
     if (name === 'leaderboard') {
       loadGroupLeaderboard();
     }
+
+    // Same idea: a friend joining your group while you already had the
+    // app open otherwise never shows up until you leave/rejoin or reload.
+    if (name === 'group') {
+      refreshGroupMembers();
+    }
   }, 160);
 }
 
@@ -402,16 +422,18 @@ function ensureMap() {
   updateMeMarker();
 }
 
-// Recenter on the browser's current-position fix, once, on map creation.
-// Silently keeps the neutral world view if permission is denied or the
-// device has no GPS. A real trip route already on screen takes priority.
+// Recenter on the browser's current-position fix. Silently keeps the
+// neutral world view if permission is denied or the device has no GPS. A
+// real trip route already on screen takes priority. Also doubles as the
+// app's early permission prompt (see promptForLocationOnce) — callable
+// before the map itself exists, hence the `map &&` guard.
 function centerMapOnUser() {
   if (!navigator.geolocation) return;
 
   navigator.geolocation.getCurrentPosition(
     (position) => {
       MAP_CENTER = [position.coords.latitude, position.coords.longitude];
-      if (!tripRouteBounds) {
+      if (map && !tripRouteBounds) {
         map.setView(MAP_CENTER, USER_ZOOM);
       }
     },
@@ -420,6 +442,18 @@ function centerMapOnUser() {
     },
     { maximumAge: 5 * 60 * 1000 }
   );
+}
+
+// Ask for location permission right when the app loads, instead of only
+// when Start Trip or the Map tab first trigger it — gets the system
+// prompt out of the way up front. One-shot per page load; the result
+// (granted/denied/unavailable) is handled silently here since Start Trip
+// and the Map tab already handle every outcome on their own.
+let hasPromptedForLocation = false;
+function promptForLocationOnce() {
+  if (hasPromptedForLocation) return;
+  hasPromptedForLocation = true;
+  centerMapOnUser();
 }
 
 // Simple top-down car silhouette: a rounded body with a darker rectangle
@@ -615,6 +649,19 @@ async function groupMembers(groupId) {
     }));
 }
 
+// Re-fetch just the member list (not the whole channel lifecycle) and
+// re-render everything that depends on it. Called whenever the Group tab
+// is opened, and by the realtime group_members subscription below — a
+// friend who joined while you already had the group open otherwise stays
+// stuck at the stale count you loaded with, and never shows up on the map
+// either, since the friend-marker code filters against this same cache.
+async function refreshGroupMembers() {
+  if (!myGroup) return;
+  groupMembersCache = await groupMembers(myGroup.id);
+  renderGroup();
+  rebuildFriendMarkers(); // a newly-visible member might already be sharing
+}
+
 // --- Live friend markers on the map (PART 4) -------------------------------
 // A moving marker is shown ONLY for group members (not you) who are
 // currently present (sharing) on the group's Realtime channel AND whose
@@ -692,6 +739,17 @@ function joinGroupChannel(groupId) {
   myGroupChannel.on('broadcast', { event: 'location' }, ({ payload }) => {
     updateFriendMarker(payload);
   });
+
+  // Someone joining or leaving the group — refresh the member list (and
+  // therefore the map markers) live, instead of only on a tab switch.
+  // Requires group_members to be added to the supabase_realtime
+  // publication (see supabase-schema.sql) — silently never fires
+  // otherwise, which is why the Group-tab refresh above exists too.
+  myGroupChannel.on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'group_members', filter: `group_id=eq.${groupId}` },
+    () => refreshGroupMembers()
+  );
 
   myGroupChannel.subscribe((status) => {
     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
@@ -1371,6 +1429,9 @@ stopBtn.addEventListener('click', () => {
 const authViewEl = document.getElementById('authView');
 const appViewEl = document.getElementById('appView');
 const logoutBtnEl = document.getElementById('logoutBtn');
+const confirmBannerEl = document.getElementById('confirmBanner');
+const confirmBannerTextEl = document.getElementById('confirmBannerText');
+const confirmBannerDismissEl = document.getElementById('confirmBannerDismiss');
 const guestBannerEl = document.getElementById('guestBanner');
 const saveAccountBtnEl = document.getElementById('saveAccountBtn');
 const authPanelEl = document.getElementById('authPanel');
@@ -1413,6 +1474,7 @@ function showAuthScreen() {
   logoutBtnEl.hidden = true;
   statusEl.hidden = true;         // the "Not tracking" pill belongs to the app
   guestBannerEl.hidden = true;
+  confirmBannerEl.hidden = true;  // no longer relevant once logged out
   authViewEl.hidden = false;
 }
 
@@ -1422,11 +1484,52 @@ function showAppScreen() {
   logoutBtnEl.hidden = false;
   statusEl.hidden = false;
   syncGuestBanner();
+  promptForLocationOnce();
 }
 
 function syncGuestBanner() {
   guestBannerEl.hidden = !isAnonymousUser;
 }
+
+// --- Email-confirmed banner ----------------------------------------------
+
+const CONFIRM_BANNER_COPY = {
+  signup: "Email confirmed — you're all set!",
+  email_change: 'New email confirmed — your account is fully saved.',
+};
+
+// Shows at most once per page load, and only for a type this app actually
+// has a flow for (plain signup, or the "Save my account" email change).
+// Called from loadAppData() — i.e. only once we know a session actually
+// came out of this redirect, not just that the URL happened to mention it.
+function maybeShowConfirmBanner() {
+  if (!pendingAuthRedirectType) return;
+
+  const text = CONFIRM_BANNER_COPY[pendingAuthRedirectType];
+  pendingAuthRedirectType = null; // only ever show this once, success or not
+  if (!text) return;
+
+  confirmBannerTextEl.textContent = text;
+  confirmBannerEl.hidden = false;
+  stripAuthRedirectParamsFromUrl();
+}
+
+// Removes the confirmation tokens/type from the address bar once we've
+// read them, so a refresh doesn't show raw tokens or re-trigger the
+// banner. Safe to call here (not earlier): by the time loadAppData() runs,
+// the Supabase client has already finished reading whatever it needed
+// from the original URL — doing this any earlier risks wiping the hash
+// before the client gets to it. Keeps unrelated params (like ?join=CODE).
+function stripAuthRedirectParamsFromUrl() {
+  const params = new URLSearchParams(location.search);
+  ['type', 'code', 'access_token', 'refresh_token', 'expires_in', 'token_type'].forEach((k) => params.delete(k));
+  const rest = params.toString();
+  history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : ''));
+}
+
+confirmBannerDismissEl.addEventListener('click', () => {
+  confirmBannerEl.hidden = true;
+});
 
 // --- Form copy + the login/signup toggle --------------------------------
 
@@ -1702,6 +1805,7 @@ async function loadAppData(session) {
   currentUserId = session.user.id;
   isAnonymousUser = !!session.user.is_anonymous;
   syncGuestBanner();
+  maybeShowConfirmBanner();
   await ensureProfile(session);
   await loadMyGroup();
   await onGroupChanged();

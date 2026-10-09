@@ -15,6 +15,14 @@
       <button id="logoutBtn" class="app__logout" type="button" hidden>Log out</button>
     </header>
 
+    <!-- ============ Email-confirmed banner (shown once, right after an
+         email confirmation or "Save my account" email-change link lands
+         back here) ============ -->
+    <div class="welcome-banner" id="confirmBanner" hidden>
+      <p class="welcome-banner__text" id="confirmBannerText"></p>
+      <button class="welcome-banner__dismiss" id="confirmBannerDismiss" type="button" aria-label="Dismiss">&times;</button>
+    </div>
+
     <!-- ============ Guest session banner (anonymous users only) ============ -->
     <div class="guest-banner" id="guestBanner" hidden>
       <p class="guest-banner__text">
