@@ -773,23 +773,41 @@ async function loadMyGroup() {
 
 // group_members rows for one group, resolved against `profiles`.
 // Returns [{ profile, isMe }]; skips any member with no profile row.
+//
+// Two plain queries joined client-side, NOT PostgREST's embedded-resource
+// select (`profiles(id, display_name, color)`) — group_members.user_id and
+// profiles.id both reference auth.users but not each other, so PostgREST
+// can't infer that relationship and the embedded form fails with PGRST200
+// ("Could not find a relationship between 'group_members' and 'profiles'").
 async function groupMembers(groupId) {
-  const { data, error } = await supabaseClient
+  const { data: memberRows, error: memberError } = await supabaseClient
     .from('group_members')
-    .select('user_id, profiles(id, display_name, color)')
+    .select('user_id')
     .eq('group_id', groupId);
 
-  if (error) {
-    console.error('Load group members failed:', error);
+  if (memberError) {
+    console.error('Load group members failed:', memberError);
     return [];
   }
 
-  return (data || [])
-    .filter((m) => m.profiles)
-    .map((m) => ({
-      profile: m.profiles,
-      isMe: m.user_id === currentUserId,
-    }));
+  const userIds = (memberRows || []).map((m) => m.user_id);
+  if (userIds.length === 0) return [];
+
+  const { data: profileRows, error: profileError } = await supabaseClient
+    .from('profiles')
+    .select('id, display_name, color')
+    .in('id', userIds);
+
+  if (profileError) {
+    console.error('Load profiles failed:', profileError);
+    return [];
+  }
+
+  const profilesById = new Map((profileRows || []).map((p) => [p.id, p]));
+
+  return userIds
+    .map((userId) => ({ profile: profilesById.get(userId), isMe: userId === currentUserId }))
+    .filter((m) => m.profile);
 }
 
 // Re-fetch just the member list (not the whole channel lifecycle) and
