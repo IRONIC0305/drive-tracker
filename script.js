@@ -76,6 +76,11 @@ const leaderboardRangeEl = document.getElementById('leaderboardRange');
 const shareToggleEl = document.getElementById('shareToggle');
 const shareStatusEl = document.getElementById('shareStatus');
 const mapEmptyStateEl = document.getElementById('mapEmptyState');
+const speedBadgeEl = document.getElementById('speedBadge');
+const speedBadgeValueEl = document.getElementById('speedBadgeValue');
+const reportWidgetEl = document.getElementById('reportWidget');
+const reportBtnEl = document.getElementById('reportBtn');
+const reportPickerEl = document.getElementById('reportPicker');
 
 // --- Math helpers -----------------------------------------------------------
 
@@ -182,6 +187,28 @@ function currentSpeedKmh(position) {
   const km = calculateDistance(a.lat, a.lng, b.lat, b.lng);
   const hours = (b.timestamp - a.timestamp) / 1000 / 3600;
   return hours > 0 ? km / hours : 0;
+}
+
+// --- Speed badge (Waze-style readout pinned over the map) ------------------
+// Shown whenever a trip is tracking or live sharing is on — whichever GPS
+// watch is actually running updates the value; the other stays dormant.
+
+function setSpeedBadgeValue(speedKmh) {
+  if (speedKmh == null || Number.isNaN(speedKmh)) return;
+  speedBadgeValueEl.textContent = Math.max(0, speedKmh).toFixed(0);
+}
+
+function syncSpeedBadgeVisibility() {
+  speedBadgeEl.hidden = !(watchId != null || isSharingLocation);
+}
+
+// Raw GPS speed only (no distance-fallback estimate) — used by the live
+// share watch, which has no tripPoints array to estimate from.
+function speedKmhFromPosition(position) {
+  if (position.coords.speed != null && !Number.isNaN(position.coords.speed) && position.coords.speed >= 0) {
+    return position.coords.speed * 3.6; // m/s -> km/h
+  }
+  return null;
 }
 
 // --- Trip History (real — Supabase `trips` table) --------------------------
@@ -400,6 +427,7 @@ const USER_ZOOM = 13;
 let map = null;
 let routeLayer = null;       // holds the polyline + start/end markers
 let friendLayer = null;      // holds the live group-member markers
+let roadReportLayer = null;  // holds the hazard/incident report markers
 let meMarker = null;         // the "You" marker, shown only while sharing
 let tripRouteBounds = null;  // map bounds of the last drawn route
 
@@ -416,9 +444,11 @@ function ensureMap() {
 
   routeLayer = L.layerGroup().addTo(map);
   friendLayer = L.layerGroup().addTo(map);
+  roadReportLayer = L.layerGroup().addTo(map);
 
   centerMapOnUser();
   rebuildFriendMarkers(); // no-op until you're in a group with someone sharing
+  rebuildReportMarkers(); // same, for hazard reports
   updateMeMarker();
 }
 
@@ -539,6 +569,119 @@ function renderTripRoute() {
     map.fitBounds(tripRouteBounds, { padding: [30, 30] });
   }
 }
+
+// --- Hazard / incident reports (real — Supabase `road_reports` table,
+// shared with the iOS app, scoped to your current group) ------------------
+
+const ROAD_REPORT_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes, matches the iOS app
+
+// Colors reused from the existing palette — no new hues invented for this,
+// same reasoning as the group pin colors.
+const ROAD_REPORT_META = {
+  police: { label: 'Police', color: '#5B9AA8', letter: 'P' },
+  hazard: { label: 'Hazard', color: '#E0A542', letter: 'H' },
+  accident: { label: 'Accident', color: '#D0453B', letter: 'A' },
+  traffic: { label: 'Traffic', color: '#5B9AA8', letter: 'T' },
+};
+
+let roadReports = [];      // [{id, user_id, type, lat, lng, created_at}] for your current group
+let roadReportMarkers = {}; // report id -> Leaflet marker
+
+function makeReportIcon(type) {
+  const meta = ROAD_REPORT_META[type];
+  return L.divIcon({
+    className: 'map-pin-wrap',
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+    html: `<span class="report-pin" style="--report-pin:${meta.color}">${meta.letter}</span>`,
+  });
+}
+
+function isReportFresh(report) {
+  return Date.now() - new Date(report.created_at).getTime() <= ROAD_REPORT_MAX_AGE_MS;
+}
+
+// Rebuild all report markers from scratch, dropping anything past
+// ROAD_REPORT_MAX_AGE_MS. Safe to call whenever reports change, and on a
+// timer (below) to age old ones out even with no new activity.
+function rebuildReportMarkers() {
+  if (!roadReportLayer) return;
+
+  roadReportLayer.clearLayers();
+  roadReportMarkers = {};
+
+  roadReports.filter(isReportFresh).forEach((report) => {
+    const marker = L.marker([report.lat, report.lng], { icon: makeReportIcon(report.type) })
+      .bindPopup(ROAD_REPORT_META[report.type].label)
+      .addTo(roadReportLayer);
+    roadReportMarkers[report.id] = marker;
+  });
+}
+
+setInterval(rebuildReportMarkers, 30 * 1000); // age out stale reports even with no new activity
+
+async function loadRoadReports(groupId) {
+  const { data, error } = await supabaseClient
+    .from('road_reports')
+    .select('id, user_id, type, lat, lng, created_at')
+    .eq('group_id', groupId);
+
+  if (error) {
+    console.error('Load road reports failed:', error);
+    roadReports = [];
+  } else {
+    roadReports = data || [];
+  }
+  rebuildReportMarkers();
+}
+
+// Reports go in at wherever you actually are right now — prefers whichever
+// GPS fix is freshest (live-share position, then the last trip point),
+// falling back to a one-off location request so this still works with
+// sharing off.
+function getMyReportPosition(callback) {
+  if (myLivePos) {
+    callback({ lat: myLivePos[0], lng: myLivePos[1] });
+    return;
+  }
+  if (tripPoints.length > 0) {
+    const p = tripPoints[tripPoints.length - 1];
+    callback({ lat: p.lat, lng: p.lng });
+    return;
+  }
+  if (!navigator.geolocation) {
+    callback(null);
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    (position) => callback({ lat: position.coords.latitude, lng: position.coords.longitude }),
+    () => callback(null),
+    { maximumAge: 60 * 1000 }
+  );
+}
+
+function submitRoadReport(type) {
+  if (!myGroup || !currentUserId) return;
+
+  getMyReportPosition(async (pos) => {
+    if (!pos) return;
+    const { error } = await supabaseClient
+      .from('road_reports')
+      .insert({ group_id: myGroup.id, user_id: currentUserId, type, lat: pos.lat, lng: pos.lng });
+    if (error) console.error('Report failed:', error);
+  });
+}
+
+reportBtnEl.addEventListener('click', () => {
+  reportPickerEl.hidden = !reportPickerEl.hidden;
+});
+
+reportPickerEl.querySelectorAll('.report-option').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    reportPickerEl.hidden = true;
+    submitRoadReport(btn.dataset.type);
+  });
+});
 
 // ============================================================================
 // GROUPS & LIVE SHARING  (real — Supabase `groups`/`group_members`/`profiles`
@@ -751,6 +894,25 @@ function joinGroupChannel(groupId) {
     () => refreshGroupMembers()
   );
 
+  // Hazard/incident reports from any group member, live — same table and
+  // RLS the iOS app writes to.
+  myGroupChannel.on(
+    'postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'road_reports', filter: `group_id=eq.${groupId}` },
+    ({ new: row }) => {
+      roadReports.push(row);
+      rebuildReportMarkers();
+    }
+  );
+  myGroupChannel.on(
+    'postgres_changes',
+    { event: 'DELETE', schema: 'public', table: 'road_reports', filter: `group_id=eq.${groupId}` },
+    ({ old: row }) => {
+      roadReports = roadReports.filter((r) => r.id !== row.id);
+      rebuildReportMarkers();
+    }
+  );
+
   myGroupChannel.subscribe((status) => {
     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
       console.error('Group realtime channel error:', status);
@@ -769,6 +931,8 @@ function leaveGroupChannel() {
   friendHeadings = {};
   friendMarkers = {};
   if (friendLayer) friendLayer.clearLayers();
+  roadReports = [];
+  rebuildReportMarkers();
 }
 
 // --- Group view: setup screen + in-group screen ---------------------------
@@ -1072,9 +1236,13 @@ async function onGroupChanged() {
   if (myGroup) {
     groupMembersCache = await groupMembers(myGroup.id);
     joinGroupChannel(myGroup.id);
+    loadRoadReports(myGroup.id);
   } else {
     groupMembersCache = [];
   }
+
+  reportWidgetEl.hidden = !myGroup; // nowhere to report to without a group
+  reportPickerEl.hidden = true;
 
   renderGroup();          // the Group tab
   syncShareToggleEnabled();
@@ -1116,6 +1284,7 @@ function applyShareState() {
     stopLocationBroadcast();
   }
 
+  syncSpeedBadgeVisibility();
   if (currentView === 'group') renderGroup(); // reflect your own pill instantly
 }
 
@@ -1156,6 +1325,7 @@ function startLocationBroadcast() {
         myHeading = position.coords.heading;
       }
       updateMeMarker();
+      setSpeedBadgeValue(speedKmhFromPosition(position));
 
       const now = Date.now();
       if (now - lastBroadcastAt < BROADCAST_INTERVAL_MS) return;
@@ -1184,6 +1354,7 @@ function stopLocationBroadcast() {
   myLivePos = null;
   myHeading = null;
   updateMeMarker();
+  if (watchId == null) speedBadgeValueEl.textContent = '0'; // no trip still running either
 }
 
 shareToggleEl.addEventListener('change', applyShareState);
@@ -1352,6 +1523,7 @@ startBtn.addEventListener('click', () => {
 
       const speed = currentSpeedKmh(position);
       curSpeedEl.textContent = speed.toFixed(1);
+      setSpeedBadgeValue(speed);
       if (speed > topSpeed) {
         topSpeed = speed;
         topSpeedEl.textContent = topSpeed.toFixed(1);
@@ -1387,14 +1559,17 @@ startBtn.addEventListener('click', () => {
     },
     { enableHighAccuracy: true }
   );
+  syncSpeedBadgeVisibility();
 });
 
 stopBtn.addEventListener('click', () => {
   navigator.geolocation.clearWatch(watchId);
+  watchId = null;
   clearInterval(timerId);
   startBtn.disabled = false;
   stopBtn.disabled = true;
   curSpeedEl.textContent = '0.0';
+  syncSpeedBadgeVisibility();
 
   const stats = calculateTripStats(tripPoints);
   refreshStats();

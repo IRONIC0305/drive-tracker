@@ -151,6 +151,29 @@
         <div class="map-wrap">
           <div id="map"></div>
           <p class="map-empty" id="mapEmptyState">Complete a trip to see your route here</p>
+
+          <div class="speed-badge" id="speedBadge" hidden>
+            <span class="speed-badge__value" id="speedBadgeValue">0</span>
+            <span class="speed-badge__unit">km/h</span>
+          </div>
+
+          <div class="report-widget" id="reportWidget" hidden>
+            <div class="report-picker" id="reportPicker" hidden>
+              <button class="report-option" data-type="accident" type="button">
+                <span class="report-option__dot" style="background:#D0453B"></span>Accident
+              </button>
+              <button class="report-option" data-type="hazard" type="button">
+                <span class="report-option__dot" style="background:#E0A542"></span>Hazard
+              </button>
+              <button class="report-option" data-type="police" type="button">
+                <span class="report-option__dot" style="background:#5B9AA8"></span>Police
+              </button>
+              <button class="report-option" data-type="traffic" type="button">
+                <span class="report-option__dot" style="background:#5B9AA8"></span>Traffic
+              </button>
+            </div>
+            <button class="report-btn" id="reportBtn" type="button" aria-label="Report something">!</button>
+          </div>
         </div>
 
         <ul class="legend">
