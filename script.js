@@ -189,6 +189,40 @@ function currentSpeedKmh(position) {
   return hours > 0 ? km / hours : 0;
 }
 
+// --- In-progress trip persistence -------------------------------------------
+// tripPoints/startTime/topSpeed only ever lived in memory, so a page
+// reload mid-trip silently threw the whole trip away — this is exactly
+// what iOS/Android browsers do to a backgrounded tab under memory
+// pressure (switching to another app or tab, then coming back), not just
+// an explicit refresh. Mirroring every GPS fix into localStorage lets a
+// reload resume the same trip instead of losing it.
+const ACTIVE_TRIP_KEY = 'dt_active_trip';
+
+function persistActiveTrip() {
+  try {
+    localStorage.setItem(ACTIVE_TRIP_KEY, JSON.stringify({ tripPoints, startTime, topSpeed }));
+  } catch (e) {
+    // Best-effort only — see the welcome-banner dismiss flag for the same pattern.
+  }
+}
+
+function clearPersistedActiveTrip() {
+  try {
+    localStorage.removeItem(ACTIVE_TRIP_KEY);
+  } catch (e) {
+    // Best-effort only.
+  }
+}
+
+function loadPersistedActiveTrip() {
+  try {
+    const raw = localStorage.getItem(ACTIVE_TRIP_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 // --- Speed badge (Waze-style readout pinned over the map) ------------------
 // Shown whenever a trip is tracking or live sharing is on — whichever GPS
 // watch is actually running updates the value; the other stays dormant.
@@ -1510,20 +1544,11 @@ renderLeaderboard(); // shows the "join a group" prompt until real data loads
 
 // --- Buttons -----------------------------------------------------------
 
-startBtn.addEventListener('click', () => {
-  if (!navigator.geolocation) {
-    setStatus('This browser has no GPS support', 'error');
-    return;
-  }
-
-  tripPoints = [];
-  startTime = Date.now();
-  topSpeed = 0;
-  resetStats();
-  if (routeLayer) routeLayer.clearLayers(); // drop the previous trip's line
-  tripRouteBounds = null;
-  setStatus('Tracking…', 'tracking');
-  igniteStatus(); // one-time amber pulse — the "ignition" moment
+// Shared by a fresh Start Trip tap and by resuming a trip that survived a
+// page reload — tripPoints/startTime/topSpeed are already set by the
+// caller either way, this just wires up the actual GPS watch + UI state.
+function beginTracking(statusText) {
+  setStatus(statusText, 'tracking');
   startBtn.disabled = true;
   stopBtn.disabled = false;
 
@@ -1548,6 +1573,7 @@ startBtn.addEventListener('click', () => {
       }
 
       refreshStats();
+      persistActiveTrip(); // survive a reload mid-trip — see the comment above its definition
       console.log('New point:', point);
     },
     (error) => {
@@ -1570,14 +1596,55 @@ startBtn.addEventListener('click', () => {
       // only reset for the terminal case.)
       if (error.code === 1) {
         navigator.geolocation.clearWatch(watchId);
+        watchId = null;
         clearInterval(timerId);
         startBtn.disabled = false;
         stopBtn.disabled = true;
+        syncSpeedBadgeVisibility();
       }
     },
     { enableHighAccuracy: true }
   );
   syncSpeedBadgeVisibility();
+}
+
+// If a trip was still in progress the last time this tab was alive, pick
+// it back up instead of silently losing it — see the comment above
+// persistActiveTrip(). Called once, right after the app screen shows.
+let hasTriedResumeTrip = false;
+function tryResumeActiveTripOnce() {
+  if (hasTriedResumeTrip) return;
+  hasTriedResumeTrip = true;
+
+  if (!navigator.geolocation) return;
+  const saved = loadPersistedActiveTrip();
+  if (!saved || !Array.isArray(saved.tripPoints) || saved.tripPoints.length === 0) return;
+
+  tripPoints = saved.tripPoints;
+  startTime = saved.startTime || Date.now();
+  topSpeed = saved.topSpeed || 0;
+  topSpeedEl.textContent = topSpeed.toFixed(1);
+  refreshStats(); // redraw distance/duration/avg from the restored points
+  if (routeLayer) routeLayer.clearLayers();
+  tripRouteBounds = null;
+
+  beginTracking('Tracking resumed — picking back up where this tab left off…');
+}
+
+startBtn.addEventListener('click', () => {
+  if (!navigator.geolocation) {
+    setStatus('This browser has no GPS support', 'error');
+    return;
+  }
+
+  tripPoints = [];
+  startTime = Date.now();
+  topSpeed = 0;
+  resetStats();
+  if (routeLayer) routeLayer.clearLayers(); // drop the previous trip's line
+  tripRouteBounds = null;
+  igniteStatus(); // one-time amber pulse — the "ignition" moment
+  beginTracking('Tracking…');
 });
 
 stopBtn.addEventListener('click', () => {
@@ -1588,6 +1655,7 @@ stopBtn.addEventListener('click', () => {
   stopBtn.disabled = true;
   curSpeedEl.textContent = '0.0';
   syncSpeedBadgeVisibility();
+  clearPersistedActiveTrip(); // this trip is done, successfully saved or not
 
   const stats = calculateTripStats(tripPoints);
   refreshStats();
@@ -1678,6 +1746,7 @@ function showAppScreen() {
   statusEl.hidden = false;
   syncGuestBanner();
   promptForLocationOnce();
+  tryResumeActiveTripOnce();
 }
 
 function syncGuestBanner() {
