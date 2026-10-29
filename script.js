@@ -2256,25 +2256,21 @@ function computeRangeSince(range) {
 
 // Pull every group member's trips (RLS allows seeing a groupmate's trip
 // rows), aggregate per user in JS, and render.
+// TEMPORARY, per explicit request: ranks every signed-up user who has at
+// least one trip, not just your current group's members — the group-scoped
+// version is in git history (the commit before this one) if this needs to
+// go back to being group-only later. Needs the broad "select all trips"
+// RLS policy (supabase-schema.sql section 12) — drop that policy to revert
+// trip visibility to groupmates-only at the same time.
 async function loadGroupLeaderboard() {
-  leaderboardGroupNameEl.textContent = myGroup ? myGroup.name : 'Your group';
+  leaderboardGroupNameEl.textContent = 'All drivers';
   leaderboardRangeLabelEl.textContent = `Leaderboard · ${RANGE_LABELS[leaderboardRange]}`;
-
-  if (!myGroup || groupMembersCache.length === 0) {
-    leaderboardCache = [];
-    myTopSpeedStatEl.textContent = '—';
-    myLongestTripStatEl.textContent = '—';
-    renderLeaderboard();
-    return;
-  }
 
   leaderboardListEl.innerHTML = '<p class="hint">Loading…</p>';
 
-  const memberIds = groupMembersCache.map((m) => m.profile.id);
   let query = supabaseClient
     .from('trips')
-    .select('user_id, distance_km, top_speed_kmh, created_at')
-    .in('user_id', memberIds);
+    .select('user_id, distance_km, top_speed_kmh, created_at');
 
   const since = computeRangeSince(leaderboardRange);
   if (since) query = query.gte('created_at', since);
@@ -2299,10 +2295,27 @@ async function loadGroupLeaderboard() {
     totalsByUser[trip.user_id] = entry;
   });
 
-  leaderboardCache = groupMembersCache.map((m) => {
-    const totals = totalsByUser[m.profile.id] || { totalKm: 0, trips: 0, longestKm: 0, topSpeedKmh: 0 };
-    return { name: m.profile.display_name, isMe: m.isMe, ...totals };
-  });
+  const userIds = Object.keys(totalsByUser);
+  if (userIds.length === 0) {
+    leaderboardCache = [];
+    myTopSpeedStatEl.textContent = '—';
+    myLongestTripStatEl.textContent = '—';
+    renderLeaderboard();
+    return;
+  }
+
+  const { data: profileRows, error: profileError } = await supabaseClient
+    .from('profiles')
+    .select('id, display_name')
+    .in('id', userIds);
+  if (profileError) console.error('Load leaderboard profiles failed:', profileError);
+  const profilesById = new Map((profileRows || []).map((p) => [p.id, p]));
+
+  leaderboardCache = userIds.map((userId) => ({
+    name: (profilesById.get(userId) && profilesById.get(userId).display_name) || 'Driver',
+    isMe: userId === currentUserId,
+    ...totalsByUser[userId],
+  }));
 
   const mine = leaderboardCache.find((f) => f.isMe);
   myTopSpeedStatEl.textContent = mine && mine.topSpeedKmh > 0 ? `${mine.topSpeedKmh.toFixed(1)} km/h` : '—';
@@ -2334,11 +2347,6 @@ function formatGapText(friend, metric, leaderValue) {
 // Build the ranked leaderboard for the current time range + metric: a dark
 // "leader card" for P1, then the rest as rows on a plain card beneath it.
 function renderLeaderboard() {
-  if (!myGroup) {
-    leaderboardListEl.innerHTML = '<p class="hint">Join a group to see its leaderboard.</p>';
-    return;
-  }
-
   const ranked = leaderboardCache
     .slice()
     .sort((a, b) => metricValue(b, leaderboardMetric) - metricValue(a, leaderboardMetric));

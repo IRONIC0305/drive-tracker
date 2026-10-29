@@ -458,3 +458,20 @@ begin
     end loop;
   end loop;
 end $$;
+
+-- ============================================================================
+-- 12. TEMPORARY — leaderboard shows every signed-up user, not just groupmates
+-- ============================================================================
+-- Explicitly requested as a "for the time being" change. This is a real
+-- privacy broadening from the original design (see the comment on "select
+-- groupmates trips" above, section 3): every authenticated user can now see
+-- every other user's individual trip rows (distance, top speed, timestamp),
+-- not just a groupmate's. To revert: drop this policy — "select own
+-- trips" and "select groupmates trips" stay in place underneath it, so
+-- dropping this alone puts trip visibility straight back to how it was.
+
+drop policy if exists "select all trips (temporary)" on public.trips;
+
+create policy "select all trips (temporary)"
+  on public.trips for select to authenticated
+  using (true);
