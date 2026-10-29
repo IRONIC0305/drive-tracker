@@ -1,1107 +1,622 @@
-/* Drive Tracker — motorsport telemetry / instrument-cluster styling */
+/* Drive Tracker — mobile-first redesign: dark "driving mode" screens, a
+   light "Paddock" leaderboard, pill controls, tabular mono numerals. */
 
 :root {
   color-scheme: dark;
 
-  /* Surfaces */
-  --bg: #16181C;          /* deep graphite, not pure black */
-  --card: #1E2126;        /* card / surface */
-  --border: #2C3038;      /* 1px hairline border — no shadows anywhere */
-  --raised: #262A31;      /* slightly lifted surface: active segment */
+  /* Surfaces (dark, default) */
+  --bg: #16181C;
+  --card: #1E2126;
+  --border: #2C3038;
+  --raised: #262A31;
+  --track: var(--border); /* segmented-control track; overridden light in .theme-light */
 
   /* Accents */
-  --accent: #E0A542;      /* amber-gold: tachometer needle; also = positive */
+  --accent: #E0A542;
   --accent-dim: rgba(224, 165, 66, 0.14);
-  --secondary: #5B9AA8;   /* cool blue-grey: secondary data / links */
+  --secondary: #5B9AA8;
   --secondary-dim: rgba(91, 154, 168, 0.14);
-  --danger: #D0453B;      /* stop / error only — never used to mean "success" */
+  --danger: #D0453B;
   --danger-dim: rgba(208, 69, 59, 0.14);
 
   /* Text */
   --text: #EDEDEA;
   --muted: #8A8F98;
 
-  --radius: 14px;
+  --radius: 18px;
+  --radius-sm: 12px;
   --radius-pill: 999px;
+  --tap: 44px;
+  --app-max: 520px;
 
-  /* Type: clean technical sans for UI, tabular mono for the hero numbers */
-  --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  /* ui-monospace first so macOS resolves it to SF Mono reliably; the final
-     `monospace` keyword guarantees a fixed-width fallback everywhere. */
-  --font-num: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, "Roboto Mono", "JetBrains Mono", Consolas, monospace;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-num: 'JetBrains Mono', ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
-* {
-  box-sizing: border-box;
+/* Light theme — scoped to the Leaderboard screen only (.theme-light),
+   everything else (nav bar included) stays dark. */
+.theme-light {
+  --bg: #F4F2EC;
+  --card: #FFFFFF;
+  --border: #E6E3DA;
+  --track: #E6E3DA;
+  --text: #1B1D21;
+  --muted: #6B6F76;
 }
 
-[hidden] {
-  display: none !important;
-}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
 
-html, body {
-  margin: 0;
-  padding: 0;
-}
+/* Several components below set an explicit `display` (flex, etc.) at the
+   same specificity as the UA stylesheet's [hidden]{display:none} — without
+   this, toggling .hidden via JS on those elements silently does nothing. */
+[hidden] { display: none !important; }
 
 body {
-  font-family: var(--font-ui);
   background: var(--bg);
   color: var(--text);
-  line-height: 1.5;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 .app {
-  max-width: 480px;
+  max-width: var(--app-max);
   margin: 0 auto;
-  padding: 24px 16px 48px;
   min-height: 100vh;
-}
-
-/* Header */
-.app__header {
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(96px + env(safe-area-inset-bottom, 0px));
   position: relative;
-  text-align: center;
-  margin-bottom: 20px;
 }
 
-.app__logout {
-  position: absolute;
-  top: 0;
-  right: 0;
-  font-family: inherit;
-  font-size: 0.76rem;
-  font-weight: 600;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  padding: 5px 12px;
-  cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease;
-}
-
-.app__logout:hover {
-  color: var(--text);
-  border-color: var(--muted);
-}
-
-.app__title {
-  font-size: 1.5rem;
-  font-weight: 650;
-  margin: 0 0 12px;
-  letter-spacing: -0.01em;
-}
-
-/* First-time welcome tip — amber, the app's "positive/active" accent,
-   since this is a helpful nudge rather than a warning. */
-.welcome-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--accent-dim);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
-  padding: 10px 14px;
-  margin-bottom: 16px;
-}
-
-.welcome-banner__text {
-  flex: 1;
-  margin: 0;
-  font-size: 0.82rem;
-  line-height: 1.4;
-  color: var(--text);
-}
-
-.welcome-banner__dismiss {
-  flex: none;
-  width: 44px;
-  height: 44px;
-  margin: -9px -10px -9px 0; /* full tap target without widening the banner's visual layout */
-  font-size: 1.1rem;
-  line-height: 1;
-  color: var(--accent);
-  background: transparent;
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.welcome-banner__dismiss:hover {
-  background: var(--accent-dim);
-}
-
-/* Guest session banner — informational tone (secondary/teal), not a
-   warning, since a guest session is the normal starting state, not an
-   error condition. */
-.guest-banner {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  background: var(--secondary-dim);
-  border: 1px solid var(--secondary);
-  border-radius: var(--radius);
-  padding: 10px 14px;
-  margin-bottom: 16px;
-}
-
-.guest-banner__text {
-  flex: 1 1 220px;
-  margin: 0;
-  font-size: 0.8rem;
-  line-height: 1.4;
-  color: var(--text);
-}
-
-.guest-banner__action {
-  flex: none;
-  color: var(--secondary);
-  font-weight: 700;
-}
-
-/* Status indicator */
-.status {
-  display: inline-block;
-  padding: 6px 16px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  font-size: 0.9rem;
-  font-weight: 600;
-  margin: 0;
-}
-
-.status--idle     { background: var(--card);          color: var(--muted); }
-.status--tracking { background: var(--accent-dim);    color: var(--accent);    border-color: var(--accent); }
-.status--done     { background: var(--secondary-dim); color: var(--secondary); border-color: var(--secondary); }
-.status--error    { background: var(--danger-dim);    color: var(--danger);    border-color: var(--danger); }
-
-/* One-time "ignition" pulse on the status indicator when a trip starts */
-@keyframes ignition {
-  0%   { box-shadow: 0 0 0 0 rgba(224, 165, 66, 0.55); }
-  70%  { box-shadow: 0 0 0 16px rgba(224, 165, 66, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(224, 165, 66, 0); }
-}
-
-.status--ignite {
-  animation: ignition 750ms ease-out 1;
-}
-
-/* Tab switcher — segmented control, like a car infotainment system */
-.tabs {
-  display: flex;
-  gap: 2px;
-  margin-bottom: 20px;
-  padding: 4px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-}
-
-.tab {
-  flex: 1;
-  font-family: inherit;
-  font-size: 0.85rem;
-  font-weight: 550;
-  white-space: nowrap;
-  padding: 9px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
-}
-
-.tab:hover:not(.tab--active) {
-  color: var(--text);
-}
-
-.tab--active {
-  background: var(--raised);
-  border-color: var(--border);
-  color: var(--accent);
-}
+.icon { width: 20px; height: 20px; flex-shrink: 0; }
 
 /* View crossfade (the only tab-switch motion) */
-.view {
-  transition: opacity 0.16s ease;
-}
+.view { opacity: 1; transition: opacity 0.16s ease; }
+.view--exit, .view--enter { opacity: 0; }
 
-.view--exit,
-.view--enter {
-  opacity: 0;
-}
-
-/* Stat grid */
-.stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-bottom: 20px;
-}
-
-.stat {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px 18px;
-  text-align: left;
-}
-
-/* Hero stat — trip distance, the headline number of the app */
-.stat--hero {
-  grid-column: 1 / -1;
-  padding: 28px 22px;
-}
-
-.stat__value {
-  display: block;
-  font-family: var(--font-num);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1; /* belt-and-suspenders for older engines */
-  font-size: 1.55rem;              /* secondary stats */
-  font-weight: 600;
-  letter-spacing: normal;          /* mono needs no tracking; keeps digits even */
-  line-height: 1.1;
-  color: var(--text);
-}
-
-/* Distance: the true hero — >2x the secondary numbers, lands first */
-.stat--hero .stat__value {
-  font-size: 4rem;
-  font-weight: 700;
-}
-
-.stat__label {
-  display: block;
-  margin-top: 6px;
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: var(--muted);
-}
-
-/* Small caption under the hero number (GPS point count) */
-.stat__note {
-  display: block;
-  margin-top: 8px;
-  font-size: 0.78rem;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Stat roles ------------------------------------------------------------- */
-
-/* Context stats (Duration, Avg speed): secondary blue-grey numbers */
-.stat--context .stat__value {
-  color: var(--secondary);
-}
-
-/* Live stats (Current speed, Top speed): stay white */
-.stat--live .stat__value {
-  color: var(--text);
-}
-
-/* Top speed is a personal-best-style stat: subtle amber accent */
-.stat--pb {
-  border-color: var(--accent);
-}
-
-.stat--pb .stat__label {
-  color: var(--accent);
-}
-
-/* Leaderboard */
-.leaderboard__title {
-  font-size: 1.05rem;
-  font-weight: 600;
-  margin: 0 0 12px;
-  color: var(--text);
-}
-
-.leaderboard__list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.friend {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-}
-
-.friend--p1 {
-  border-color: var(--accent);
-}
-
-/* Rank de-emphasis below P1: the pack visibly thins out going down the list.
-   P2/P3 get a slight boost above the baseline; P4+ fade slightly below it. */
-.friend--rank-upper .friend__name {
-  font-size: 1.08rem;
-  font-weight: 700;
-}
-
-.friend--rank-lower {
-  opacity: 0.82;
-}
-
-.friend--rank-lower .friend__name {
-  font-weight: 550;
-}
-
-/* Motorsport-style position badge: P1, P2, P3 … */
-.pos-badge {
-  flex: none;
-  min-width: 36px;
-  padding: 3px 8px;
-  text-align: center;
-  font-family: var(--font-num);
-  font-size: 0.8rem;
-  font-weight: 700;
-  color: var(--muted);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
-.pos-badge--p1 {
-  color: #16181C;
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.friend__body {
-  flex: 1;
-}
-
-.friend__name {
-  display: block;
-  font-size: 1.02rem;
-  font-weight: 600;
-}
-
-.friend__stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px 14px;
-  margin-top: 3px;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-.friend__stats strong {
-  font-family: var(--font-num);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--text);
-}
-
-/* Leaderboard time-range filter — small segmented control, same visual
-   language as the main tab bar but scaled down */
-.range-filter {
-  display: flex;
-  gap: 2px;
-  margin-bottom: 12px;
-  padding: 3px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-}
-
-.range-filter__btn {
-  flex: 1;
-  font-family: inherit;
-  font-size: 0.76rem;
-  font-weight: 550;
-  white-space: nowrap;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
-}
-
-.range-filter__btn:hover:not(.range-filter__btn--active) {
-  color: var(--text);
-}
-
-.range-filter__btn--active {
-  background: var(--raised);
-  border-color: var(--border);
-  color: var(--accent);
-}
-
-/* Controls */
-.controls {
-  display: flex;
-  gap: 10px;
-}
-
-.btn {
-  flex: 1;
-  font-family: inherit;
-  font-size: 0.98rem;
-  font-weight: 600;
-  padding: 14px 16px;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-.btn--start {
-  background: var(--accent);
-  color: #16181C;
-}
-
-.btn--start:hover:not(:disabled) {
-  background: #EEB65B;
-}
-
-.btn--stop {
-  background: transparent;
-  color: var(--danger);
-  border-color: var(--danger);
-}
-
-.btn--stop:hover:not(:disabled) {
-  background: var(--danger-dim);
-}
-
-.btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-/* Hint text */
-.hint {
-  font-size: 0.82rem;
-  color: var(--muted);
-  margin-top: 16px;
-}
-
-/* Trip History (real data — Supabase `trips` table) */
-.trip-history {
-  margin-top: 24px;
-}
-
-.trip-history__title {
-  font-size: 1.05rem;
-  font-weight: 600;
-  margin: 0 0 12px;
-  color: var(--text);
-}
-
-.trip-history__list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.trip-row {
+/* ============ Header ============ */
+.app__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  background: var(--card);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.app__title { font-size: 1.3rem; font-weight: 800; margin: 0; letter-spacing: -0.01em; }
+
+.app__logout {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 16px;
-}
-
-.trip-row__date {
-  font-size: 0.85rem;
+  background: var(--card);
   color: var(--muted);
-}
-
-.trip-row__stats {
-  display: flex;
-  gap: 14px;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-
-.trip-row__stats strong {
-  font-family: var(--font-num);
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-ui);
   font-weight: 600;
-  color: var(--text);
+  font-size: 0.82rem;
+  cursor: pointer;
 }
+.app__logout:hover { color: var(--text); border-color: var(--muted); }
 
-/* Map */
-.map-wrap {
-  position: relative;
-}
-
-#map {
-  height: 360px;
+/* ============ Banners ============ */
+.welcome-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
   border-radius: var(--radius);
-  border: 1px solid var(--border);
-  z-index: 0;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.welcome-banner__text { margin: 0; font-size: 0.85rem; color: var(--text); line-height: 1.4; flex: 1; }
+.welcome-banner__dismiss {
+  background: transparent; border: none; color: var(--muted); font-size: 1.1rem;
+  line-height: 1; cursor: pointer; padding: 2px 4px; min-height: 28px;
+}
+.welcome-banner__dismiss:hover { color: var(--text); }
+
+.guest-banner {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--secondary-dim); border: 1px solid var(--secondary);
+  border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px;
+}
+.guest-banner__text { margin: 0 0 6px; font-size: 0.82rem; color: var(--text); line-height: 1.4; }
+.guest-banner__action { font-size: 0.82rem; }
+
+/* ============ Status pill (Tracker top row) ============ */
+.record-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 18px; flex-wrap: wrap;
 }
 
-/* Empty state: no saved trips yet, shown as a caption card over the map */
-.map-empty {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 10;
-  max-width: 78%;
-  margin: 0;
-  padding: 10px 16px;
-  text-align: center;
-  font-size: 0.85rem;
-  font-weight: 550;
-  color: var(--text);
+.status {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 36px;
+  padding: 8px 16px;
+  border-radius: var(--radius-pill);
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-family: var(--font-num);
+}
+.status::before {
+  content: '';
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--muted); flex-shrink: 0;
+}
+.status--idle { color: var(--muted); }
+.status--tracking { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+.status--tracking::before { background: var(--accent); animation: pulse-dot 1.4s ease-in-out infinite; }
+.status--paused { color: var(--secondary); border-color: var(--secondary); background: var(--secondary-dim); }
+.status--paused::before { background: var(--secondary); }
+.status--done { color: var(--secondary); border-color: var(--secondary); background: var(--secondary-dim); }
+.status--error { color: var(--danger); border-color: var(--danger); background: var(--danger-dim); }
+.status--error::before { background: var(--danger); }
+
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.status--ignite { animation: ignite-flash 0.5s ease; }
+@keyframes ignite-flash {
+  0% { box-shadow: 0 0 0 0 var(--accent-dim); }
+  60% { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.gps-pill {
+  font-family: var(--font-num); font-size: 0.74rem; font-weight: 600; color: var(--muted);
+  padding: 6px 12px; border-radius: var(--radius-pill); border: 1px solid var(--border);
+  white-space: nowrap; background: var(--card);
+}
+
+/* ============ Speedometer ============ */
+.speedo { position: relative; display: flex; flex-direction: column; align-items: center; margin: 4px 0 6px; }
+.speedo__arc { width: 100%; max-width: 320px; height: auto; display: block; }
+.speedo__track { fill: none; stroke: var(--border); stroke-width: 14; stroke-linecap: round; }
+.speedo__fill {
+  fill: none; stroke: var(--accent); stroke-width: 14; stroke-linecap: round;
+  stroke-dasharray: 301.6; stroke-dashoffset: 301.6;
+  transition: stroke-dashoffset 0.3s ease;
+}
+.speedo__readout {
+  position: absolute; top: 60%; left: 50%; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center;
+}
+.speedo__value {
+  font-family: var(--font-num); font-size: clamp(52px, 22vw, 88px); font-weight: 700;
+  line-height: 1; color: var(--text);
+}
+.speedo__unit { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; color: var(--muted); margin-top: 2px; }
+
+/* ============ Stat cards (Tracker) ============ */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0 4px; }
+.stat-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; display: flex; flex-direction: column; gap: 4px;
+}
+.stat-card__value { font-family: var(--font-num); font-size: 1.5rem; font-weight: 700; color: var(--text); }
+.stat-card--accent .stat-card__value { color: var(--accent); }
+.stat-card__label { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+.stat-card__label .unit { color: var(--muted); font-weight: 500; }
+
+.hint { font-size: 0.82rem; color: var(--muted); line-height: 1.45; }
+.hint--tight { margin: 6px 2px 0; font-size: 0.76rem; }
+
+/* ============ Speed-over-time chart ============ */
+.chart-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px 10px; margin: 16px 0;
+}
+.chart-card__title { font-size: 0.78rem; font-weight: 700; color: var(--muted); margin: 0 0 8px; }
+.chart { width: 100%; height: 64px; display: block; overflow: visible; }
+.chart__line {
+  fill: none; stroke: var(--accent); stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke;
+}
+
+/* ============ Controls (Start / Pause / End trip) ============ */
+.controls { margin: 18px 0 10px; }
+.controls__row { display: flex; gap: 10px; }
+.controls__row .btn { flex: 1; }
+
+/* ============ Buttons ============ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: var(--tap);
+  padding: 0 22px;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+  background: var(--card);
+  color: var(--text);
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+.btn:active { transform: scale(0.98); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+.btn--block { width: 100%; }
+.btn--sm { min-height: 36px; padding: 0 14px; font-size: 0.82rem; }
+
+.btn--start { background: var(--accent); color: #16181C; border-color: var(--accent); }
+.btn--start:hover:not(:disabled) { opacity: 0.9; }
+
+.btn--end-trip { background: var(--accent); color: #16181C; border-color: var(--accent); }
+.btn--end-trip:hover:not(:disabled) { opacity: 0.9; }
+
+.btn--stop { background: transparent; color: var(--danger); border-color: var(--danger); }
+.btn--stop:hover:not(:disabled) { background: var(--danger-dim); }
+
+.btn--outline { background: transparent; color: var(--text); border-color: var(--border); }
+.btn--outline:hover:not(:disabled) { border-color: var(--muted); }
+
+.btn--secondary { background: var(--secondary); color: #16181C; border-color: var(--secondary); }
+.btn--secondary:hover:not(:disabled) { opacity: 0.9; }
+
+.btn--ghost { background: transparent; color: var(--text); border-color: var(--border); }
+.btn--ghost:hover:not(:disabled) { border-color: var(--muted); }
+
+.btn--invite {
+  width: 100%; background: #16181C; color: #EDEDEA; border: none;
+  margin-top: 8px;
+}
+.btn--invite:hover:not(:disabled) { opacity: 0.9; }
+
+/* ============ Trip History ============ */
+.trip-history { margin-top: 24px; }
+.trip-history__title { font-size: 1rem; font-weight: 700; margin: 0 0 10px; }
+.trip-history__list { display: flex; flex-direction: column; }
+.trip-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 0; border-top: 1px solid var(--border); font-size: 0.85rem;
+}
+.trip-row__date { color: var(--muted); }
+.trip-row__stats { display: flex; gap: 14px; font-family: var(--font-num); }
+.trip-row__stats strong { color: var(--text); }
+
+/* ============ Map + Group screen ============ */
+.screen--map { padding: 0; min-height: 0; }
+
+.map-wrap { position: fixed; inset: 0; z-index: 0; }
+#map { position: absolute; inset: 0; }
+
+/* map-empty/map-pill/map-round-btn/report-widget are fixed (viewport-
+   relative), NOT nested inside .map-wrap — z-index only ranks correctly
+   against siblings, not across a parent's own stacking context, so nesting
+   them inside .map-wrap previously let .sheet (a sibling, z-index 15)
+   silently swallow clicks meant for these controls regardless of their own
+   z-index. As direct siblings of .sheet, stacking now compares correctly. */
+
+.map-empty {
+  position: fixed; top: 44%; left: 50%; transform: translate(-50%, -50%); z-index: 5;
+  max-width: 78%; margin: 0; padding: 10px 16px; text-align: center;
+  font-size: 0.85rem; font-weight: 600; color: var(--text);
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
   pointer-events: none;
 }
 
-.leaflet-container {
-  font: inherit;
-  background: var(--bg);
+.map-pill {
+  position: fixed; top: calc(14px + env(safe-area-inset-top, 0px)); left: 14px; z-index: 10;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-pill);
+  padding: 7px 7px 7px 14px; color: var(--text); font-size: 0.8rem; font-weight: 700;
+}
+.map-pill__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse-dot 1.4s ease-in-out infinite; flex-shrink: 0; }
+.map-pill__action {
+  border: none; background: var(--raised); color: var(--text); font-weight: 700; font-size: 0.76rem;
+  border-radius: var(--radius-pill); padding: 0 12px; min-height: 30px; cursor: pointer;
 }
 
-.leaflet-popup-content-wrapper,
-.leaflet-popup-tip {
-  background: var(--card);
-  color: var(--text);
-  border: 1px solid var(--border);
-  box-shadow: none;
+.map-round-btn {
+  position: fixed; top: calc(14px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 10;
+  width: 44px; height: 44px; border-radius: 50%;
+  background: var(--card); border: 1px solid var(--border); color: var(--text);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
+.map-round-btn:hover { border-color: var(--muted); }
 
-.leaflet-container a.leaflet-popup-close-button {
-  color: var(--muted);
-}
-
-/* Friend / "You" / trip start-finish markers (Leaflet divIcon) */
-.map-pin-wrap {
-  background: transparent;
-  border: 0;
-}
-
-.map-pin {
-  position: relative;
-  display: block;
-  width: 34px;
-  height: 34px;
-}
-
-/* Top-down car icon — colored per-marker via --pin, rotated by JS
-   (makeCarIcon) to face the GPS heading or the trip's start/finish
-   bearing. The drop-shadow keeps it readable over light map tiles without
-   needing a solid circular backing plate. */
-.map-pin__car {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  color: var(--pin);
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
-  transition: transform 0.3s ease;
-}
-
-.map-pin__car svg {
-  width: 22px;
-  height: 22px;
-}
-
-.map-pin__label {
-  position: absolute;
-  top: 38px;
-  left: 50%;
-  transform: translateX(-50%);
-  white-space: nowrap;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--text);
-  background: var(--card);
-  border: 1px solid var(--border);
-  padding: 1px 6px;
-  border-radius: 4px;
-}
-
-/* Hazard/incident report markers (Leaflet divIcon) — colored circle +
-   single letter, same "no icon-font needed" approach as the car markers. */
-.report-pin {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--report-pin);
-  color: var(--bg);
-  font-size: 0.78rem;
-  font-weight: 800;
-  border: 2px solid var(--bg);
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
-}
-
-/* Speed badge — Waze-style readout pinned over the map, shown whenever a
-   trip is tracking or you're sharing your live location. */
-.speed-badge {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: var(--radius-pill);
-  background: var(--card);
-  border: 3px solid var(--accent);
-}
-
-.speed-badge__value {
-  font-family: var(--font-num);
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--text);
-  line-height: 1.1;
-}
-
-.speed-badge__unit {
-  font-size: 0.55rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-/* Hazard/incident report button + picker, bottom-right over the map —
-   same role as the iOS app's floating report button. */
+/* Hazard/incident report button + picker — bottom offset clears the fixed
+   bottom tab bar (72px + safe area), which otherwise sits on top of it and
+   swallows every click. */
 .report-widget {
-  position: absolute;
-  bottom: 12px;
-  right: 12px;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
+  position: fixed; right: 14px;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px) + 14px);
+  z-index: 16; display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
 }
-
 .report-btn {
-  width: 46px;
-  height: 46px;
-  border-radius: var(--radius-pill);
-  border: none;
-  background: var(--accent);
-  color: var(--bg);
-  font-size: 1.2rem;
-  font-weight: 800;
-  line-height: 1;
-  cursor: pointer;
+  width: 48px; height: 48px; border-radius: 50%; border: none;
+  background: var(--accent); color: #16181C;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
-
-.report-picker {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-}
-
+.report-picker { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .report-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 14px 6px 8px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--text);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
+  display: flex; align-items: center; gap: 10px; min-height: 44px;
+  padding: 4px 16px 4px 4px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border); background: var(--card); color: var(--text);
+  font-family: var(--font-ui); font-weight: 700; font-size: 0.82rem; cursor: pointer; white-space: nowrap;
+}
+.report-option__icon { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.report-option__icon svg { width: 20px; height: 20px; }
+.report-option__icon--danger { background: var(--danger); color: #fff; }
+.report-option__icon--accent { background: var(--accent); color: #16181C; }
+.report-option__icon--secondary { background: var(--secondary); color: #16181C; }
+
+/* ============ Bottom sheet ============ */
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 15;
+  max-width: var(--app-max); margin: 0 auto;
+  background: var(--card); border: 1px solid var(--border); border-bottom: none;
+  border-top-left-radius: 22px; border-top-right-radius: 22px;
+  display: flex; flex-direction: column;
+  height: calc(100vh - 72px - 64px);
+  overflow: hidden; /* a backstop: oversized content must scroll inside, never bleed outside the box */
+  transform: translateY(calc(100% - 132px));
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.sheet[data-state="expanded"] { transform: translateY(0); }
+.sheet[data-state="dragging"] { transition: none; }
+
+.sheet__handle { width: 100%; border: none; background: transparent; padding: 12px 0 6px; cursor: grab; touch-action: none; min-height: 28px; }
+.sheet__grip { display: block; width: 40px; height: 5px; border-radius: var(--radius-pill); background: var(--border); margin: 0 auto; }
+
+.sheet__peek { display: flex; align-items: center; justify-content: space-between; padding: 0 20px 14px; }
+.sheet__speed-block { display: flex; align-items: baseline; gap: 6px; }
+.sheet__speed { font-family: var(--font-num); font-size: 2.1rem; font-weight: 700; color: var(--text); }
+.sheet__speed-unit { font-size: 0.78rem; font-weight: 700; color: var(--muted); }
+.sheet__meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-family: var(--font-num); font-size: 0.82rem; color: var(--muted); font-weight: 600; }
+
+.sheet__scroll {
+  flex: 1 1 auto; min-height: 0; /* lets this child actually shrink + scroll instead of forcing the sheet taller */
+  overflow-y: auto; padding: 0 20px calc(20px + env(safe-area-inset-bottom, 0px));
 }
 
-.report-option__dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-/* "Share my live location" toggle */
-.share {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 14px;
-  padding: 12px 14px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-.share__text {
-  flex: 1;
-}
-
-.share__title {
-  font-size: 0.92rem;
-  font-weight: 600;
-}
-
-.share__status {
-  font-size: 0.8rem;
-  font-weight: 600;
-  margin-top: 2px;
-}
-
-.share__status--off {
-  color: var(--muted);
-}
-
-.share__status--on {
-  color: var(--accent);
+.sheet__toggles { margin-top: 4px; }
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 0; border-top: 1px solid var(--border);
+  font-size: 0.9rem; font-weight: 600; color: var(--text);
 }
 
 .switch {
-  position: relative;
-  display: inline-block;
-  flex: none;
-  width: 46px;
-  height: 26px;
+  width: 50px; height: 30px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border); background: var(--raised);
+  position: relative; cursor: pointer; flex-shrink: 0; padding: 0;
+  transition: background 0.2s ease, border-color 0.2s ease;
 }
-
-.switch input {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
+.switch::before {
+  content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--muted); transition: transform 0.2s ease, background 0.2s ease;
 }
+.switch[aria-checked="true"] { background: var(--accent-dim); border-color: var(--accent); }
+.switch[aria-checked="true"]::before { transform: translateX(20px); background: var(--accent); }
+.switch:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.switch__slider {
-  position: absolute;
-  inset: 0;
-  cursor: pointer;
-  background: var(--border);
-  border-radius: var(--radius-pill);
-  transition: background-color 0.15s ease;
-}
+/* ============ Group setup / member list (inside the sheet) ============ */
+.panel { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+.panel__title { margin: 0 0 4px; font-size: 1rem; font-weight: 700; }
+.panel__hint { margin: 0 0 10px; font-size: 0.82rem; color: var(--muted); }
 
-.switch__slider::before {
-  content: "";
-  position: absolute;
-  width: 20px;
-  height: 20px;
-  left: 3px;
-  top: 3px;
-  background: var(--text);
-  border-radius: 50%;
-  transition: transform 0.15s ease;
-}
-
-.switch input:checked + .switch__slider {
-  background: var(--accent);
-}
-
-.switch input:checked + .switch__slider::before {
-  transform: translateX(20px);
-  background: #16181C;
-}
-
-.switch input:disabled + .switch__slider {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* Map legend */
-.legend {
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-.legend li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.legend__dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-/* ============ Group ============ */
-
-/* Setup panels (Create / Join) */
-.panel {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px;
-}
-
-.panel + .panel {
-  margin-top: 10px;
-}
-
-.panel__title {
-  font-size: 0.98rem;
-  font-weight: 600;
-  margin: 0 0 4px;
-}
-
-.panel__hint {
-  font-size: 0.8rem;
-  color: var(--muted);
-  margin: 0 0 12px;
-}
-
-/* Text inputs */
 .field {
-  width: 100%;
-  font-family: inherit;
-  font-size: 0.95rem;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin-bottom: 10px;
+  width: 100%; min-height: var(--tap); border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--card); color: var(--text);
+  padding: 0 14px; font-size: 0.95rem; font-family: var(--font-ui); margin-bottom: 10px;
 }
+.field::placeholder { color: var(--muted); }
+.field:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.field--code { font-family: var(--font-num); letter-spacing: 0.2em; text-transform: uppercase; }
 
-.field::placeholder {
-  color: var(--muted);
-}
-
-.field:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.field--code {
-  font-family: var(--font-num);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-/* In-group header */
-.group__header {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px;
-  margin-bottom: 14px;
-}
-
-.group__name {
-  font-size: 1.15rem;
-  font-weight: 650;
-  margin: 0 0 12px;
-  letter-spacing: -0.01em;
-}
-
-.group__code-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.group__code-label {
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
+.group__header { margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.group__name { margin: 0; font-size: 1.15rem; font-weight: 800; }
+.group__code-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.group__code-label { font-size: 0.76rem; color: var(--muted); }
 .group__code {
-  font-family: var(--font-num);
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  color: var(--accent);
-  background: var(--accent-dim);
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  padding: 5px 10px;
+  font-family: var(--font-num); font-weight: 700; letter-spacing: 0.15em;
+  background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent);
+  border-radius: var(--radius-sm); padding: 4px 10px;
+}
+.group__section-title { margin: 16px 0 8px; font-size: 0.78rem; font-weight: 700; color: var(--muted); }
+
+.btn--block + .btn--block { margin-top: 10px; }
+
+/* Member row — avatar + name/status + distance/speed */
+.friend { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
+.friend + .friend { border-top: 1px solid var(--border); }
+.friend__avatar {
+  width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-num); font-weight: 700; font-size: 0.82rem;
+  background: var(--raised); color: var(--text); border: 2px solid var(--secondary);
+}
+.friend__avatar--me { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+.friend__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.friend__name { font-weight: 700; font-size: 0.92rem; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.friend__sub { font-size: 0.78rem; color: var(--muted); }
+.friend__speed { font-family: var(--font-num); font-weight: 700; font-size: 0.88rem; color: var(--text); white-space: nowrap; }
+.friend__speed--muted { color: var(--muted); font-weight: 600; font-size: 0.74rem; white-space: nowrap; }
+.tag { font-size: 0.66rem; font-weight: 700; color: var(--bg); background: var(--secondary); border-radius: var(--radius-pill); padding: 1px 7px; }
+
+/* ============ Leaflet overrides + markers ============ */
+.leaflet-container { font: inherit; background: var(--bg); }
+/* Darken the plain OSM tiles client-side — invert, then re-rotate hue back
+   to roughly true colors so water/parks don't read as hallucinogenic. */
+.leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.92) saturate(0.8); }
+/* Markers/popups live outside the tile pane already, so they're unaffected. */
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+  background: var(--card); color: var(--text); border: 1px solid var(--border);
+  box-shadow: none; border-radius: var(--radius-sm);
+}
+.leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
+
+.map-pin-wrap { background: transparent; border: 0; }
+
+/* Friend / "me" live markers — 44px avatar circle with a ring, label below */
+.avatar-pin {
+  width: 44px; height: 44px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: #1E2126; border: 3px solid #5B9AA8;
+  color: #EDEDEA; font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 700; font-size: 0.9rem;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
+}
+.avatar-pin--me { border-color: #E0A542; background: #E0A542; color: #16181C; }
+.avatar-pin__arrow { width: 16px; height: 16px; transition: transform 0.2s ease; }
+.avatar-label {
+  position: absolute; top: 48px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; font-size: 0.68rem; font-weight: 700; color: #EDEDEA;
+  background: #1E2126; border: 1px solid #2C3038; padding: 2px 8px; border-radius: 999px;
+  display: flex; align-items: center; gap: 5px;
+}
+.avatar-label__speed { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.62rem; color: #8A8F98; font-weight: 600; }
+
+/* Trip route start/finish car markers (unrelated to live sharing) */
+.map-pin { position: relative; display: block; width: 34px; height: 34px; }
+.map-pin__car {
+  display: flex; align-items: center; justify-content: center; width: 34px; height: 34px;
+  color: var(--pin); filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
+}
+.map-pin__car svg { width: 22px; height: 22px; }
+.map-pin__label {
+  position: absolute; top: 38px; left: 50%; transform: translateX(-50%); white-space: nowrap;
+  font-size: 0.7rem; font-weight: 700; color: #EDEDEA; background: #1E2126; border: 1px solid #2C3038;
+  padding: 2px 8px; border-radius: 999px;
 }
 
-.group__section-title {
-  font-size: 0.95rem;
-  font-weight: 600;
-  margin: 0 0 8px;
+.report-pin {
+  width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--report-pin); color: #16181C; border: 2px solid #16181C;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
 }
+.report-pin svg { width: 16px; height: 16px; }
 
-/* Per-member live-sharing pill (reuses .friend rows from the leaderboard) */
-.live-pill {
-  flex: none;
-  align-self: center;
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 3px 9px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  color: var(--muted);
-  background: var(--bg);
-  white-space: nowrap;
-}
+/* ============ Leaderboard — "Paddock" (light theme) ============ */
+.screen--leaderboard { background: var(--bg); color: var(--text); margin: 0 -16px; padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(96px + env(safe-area-inset-bottom, 0px)); min-height: 100vh; }
 
-.live-pill--on {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--accent-dim);
-}
+.paddock-header { margin: 4px 0 16px; }
+.paddock-eyebrow { font-size: 0.8rem; color: var(--muted); font-weight: 600; margin: 0 0 4px; }
+.paddock-group-name { font-size: 1.6rem; font-weight: 800; color: var(--text); margin: 0; }
 
-/* "You" tag on your own member row */
-.tag {
-  font-family: var(--font-ui);
-  font-size: 0.68rem;
-  font-weight: 600;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0 5px;
-  margin-left: 6px;
-  vertical-align: middle;
+.range-filter { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.range-filter__btn {
+  min-height: 34px; padding: 0 14px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border); background: var(--card); color: var(--muted);
+  font-family: var(--font-ui); font-weight: 600; font-size: 0.78rem; cursor: pointer;
 }
+.range-filter__btn:hover:not(.range-filter__btn--active) { color: var(--text); }
+.range-filter__btn--active { background: var(--text); color: var(--bg); border-color: var(--text); }
 
-/* Button variants used by the group screens */
-.btn--ghost {
-  background: transparent;
-  color: var(--text);
-  border-color: var(--border);
+.segmented {
+  display: flex; background: var(--track); border-radius: var(--radius-pill);
+  padding: 4px; gap: 4px; margin-bottom: 18px;
 }
+.segmented__btn {
+  flex: 1; border: none; background: transparent; border-radius: var(--radius-pill);
+  padding: 10px 10px; font-family: var(--font-ui); font-weight: 700; font-size: 0.8rem;
+  color: var(--muted); cursor: pointer; min-height: 38px;
+}
+.segmented__btn--active { background: var(--card); color: var(--text); }
 
-.btn--ghost:hover:not(:disabled) {
-  border-color: var(--muted);
-}
+.leaderboard__list { margin-bottom: 18px; }
 
-/* Signup's primary action — same solid treatment as .btn--start, in the
-   app's secondary (teal) accent instead of amber, so "create account"
-   reads as a distinct action rather than a recolored "log in". */
-.btn--secondary {
-  background: var(--secondary);
-  color: #16181C;
+.leader-card {
+  display: flex; align-items: center; gap: 14px;
+  background: #16181C; color: #EDEDEA;
+  border-radius: var(--radius); padding: 18px; margin-bottom: 12px;
 }
+.leader-card__badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;
+  background: #E0A542; color: #16181C; font-weight: 800;
+  font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.85rem;
+}
+.leader-card__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.leader-card__name { font-weight: 700; font-size: 1.05rem; }
+.leader-card__trips { font-size: 0.78rem; color: #8A8F98; }
+.leader-card__value { font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 700; font-size: 1.35rem; white-space: nowrap; }
+.leader-card__value small { font-size: 0.6em; font-weight: 600; margin-left: 3px; color: #8A8F98; }
 
-.btn--secondary:hover:not(:disabled) {
-  background: #74B3C0;
+.rank-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.rank-row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; }
+.rank-row + .rank-row { border-top: 1px solid var(--border); }
+.rank-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+  background: var(--bg); color: var(--muted); font-weight: 700;
+  font-family: var(--font-num); font-size: 0.74rem; border: 1px solid var(--border);
 }
+.rank-row__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rank-row__name { font-weight: 700; font-size: 0.95rem; color: var(--text); }
+.rank-row__sub { font-size: 0.76rem; color: var(--muted); }
+.rank-row__value { font-family: var(--font-num); font-weight: 700; font-size: 1rem; color: var(--text); white-space: nowrap; }
 
-.btn--sm {
-  flex: none;
-  font-size: 0.8rem;
-  padding: 8px 12px;
+.paddock-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
+.paddock-stat {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px; display: flex; flex-direction: column; gap: 4px;
 }
+.paddock-stat__label { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+.paddock-stat__value { font-family: var(--font-num); font-size: 1.3rem; font-weight: 700; color: var(--text); }
 
-/* Standalone full-width button (not in a flex row like .controls) */
-.btn--block {
-  display: block;
-  width: 100%;
+/* ============ Bottom tab bar ============ */
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  max-width: var(--app-max); margin: 0 auto;
+  height: calc(72px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: #1E2126; border-top: 1px solid #2C3038;
+  display: flex; align-items: stretch; justify-content: space-around;
 }
+.tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  background: transparent; border: none; color: #8A8F98; font-family: var(--font-ui);
+  font-size: 0.66rem; font-weight: 700; cursor: pointer; min-height: var(--tap);
+}
+.tab--active { color: #E0A542; }
 
-.btn--block + .btn--block {
-  margin-top: 8px;
-}
+/* On the Leaderboard screen the nav bar itself goes light too — "near-black
+   bold" text only reads correctly against a light surface, not the dark
+   nav background used everywhere else. */
+.tabbar--light { background: #FFFFFF; border-top-color: #E6E3DA; }
+.tabbar--light .tab { color: #6B6F76; }
+.tabbar--light .tab--active { color: #1B1D21; }
 
 /* ============ Auth screen ============ */
+.auth { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px 20px; margin-top: 10vh; }
+.auth--signup .auth__title { color: var(--secondary); }
 
-.auth {
-  margin-top: 8px;
-  /* Amber = returning driver, teal = new one — the same accent grammar
-     .live-pill and .group__code already use elsewhere in the app. */
-  border-left: 3px solid var(--accent);
-  transition: border-color 0.2s ease;
-}
+.auth__body { transition: opacity 0.16s ease; }
+.auth__body--fade { opacity: 0; }
 
-.auth--signup {
-  border-left-color: var(--secondary);
-}
-
-/* Crossfade the title/fields/button when switching Log in <-> Sign up —
-   the same opacity transition .view uses for tab switching, reused here
-   instead of inventing a second motion idiom. */
-.auth__body {
-  transition: opacity 0.16s ease;
-}
-
-.auth__body--fade {
-  opacity: 0;
-}
-
-.auth__title {
-  font-size: 1.2rem;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  margin: 0 0 4px;
-}
-
-.auth__sub {
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin: 0 0 16px;
-}
+.auth__title { margin: 0 0 4px; font-size: 1.4rem; font-weight: 800; }
+.auth__sub { margin: 0 0 18px; font-size: 0.88rem; color: var(--muted); }
 
 .auth__error {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--danger);
-  background: var(--danger-dim);
-  border: 1px solid var(--danger);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin: 0 0 10px;
+  background: var(--danger-dim); color: var(--danger); border: 1px solid var(--danger);
+  border-radius: var(--radius-sm); padding: 10px 12px; font-size: 0.82rem; margin-bottom: 10px;
 }
+.auth__error--info { background: var(--secondary-dim); color: var(--secondary); border-color: var(--secondary); }
 
-/* Neutral tone — e.g. "check your email to confirm" */
-.auth__error--info {
-  color: var(--secondary);
-  background: var(--secondary-dim);
-  border-color: var(--secondary);
-}
+.auth__toggle { text-align: center; font-size: 0.85rem; color: var(--muted); margin: 14px 0 0; }
 
-.auth__toggle {
-  margin: 14px 0 0;
-  font-size: 0.85rem;
-  color: var(--muted);
-  text-align: center;
-}
-
-/* Text button styled as an inline link (mode toggle) */
 .linkbtn {
-  font-family: inherit;
-  font-size: inherit;
-  font-weight: 600;
-  color: var(--secondary);
-  background: none;
-  border: none;
-  padding: 0 0 0 4px;
-  cursor: pointer;
+  background: transparent; border: none; color: var(--accent); font-family: var(--font-ui);
+  font-weight: 700; font-size: inherit; cursor: pointer; padding: 2px 4px;
 }
-
-.linkbtn:hover {
-  text-decoration: underline;
-}
-
-.linkbtn:disabled {
-  opacity: 0.5;
-  cursor: default;
-  text-decoration: none;
-}
+.linkbtn:hover { opacity: 0.85; }
+.linkbtn:disabled { opacity: 0.45; cursor: not-allowed; }

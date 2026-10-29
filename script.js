@@ -45,12 +45,18 @@ let tripPoints = [];
 let startTime = null;
 let timerId = null;
 let topSpeed = 0; // highest km/h seen so far this trip
+let trackingState = 'idle'; // 'idle' | 'tracking' | 'paused'
 let currentUserId = null; // set by onAuthStateChange / getSession, cleared on logout
 
 // Grab the elements we update
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
+const pauseBtn = document.getElementById('pauseBtn');
+const pauseBtnLabelEl = document.getElementById('pauseBtnLabel');
+const pauseBtnIconEl = document.getElementById('pauseBtnIcon');
+const activeControlsEl = document.getElementById('activeControls');
 const statusEl = document.getElementById('status');
+const gpsAccuracyEl = document.getElementById('gpsAccuracy');
 const distanceEl = document.getElementById('distance');
 const durationEl = document.getElementById('duration');
 const avgSpeedEl = document.getElementById('avgSpeed');
@@ -60,8 +66,11 @@ const pointsEl = document.getElementById('points');
 const saveErrorEl = document.getElementById('saveError');
 const tripHistoryListEl = document.getElementById('tripHistoryList');
 const tripHistoryErrorEl = document.getElementById('tripHistoryError');
+const speedoFillEl = document.getElementById('speedoFill');
+const speedChartLineEl = document.getElementById('speedChartLine');
 
 // View switching + leaderboard + map + group
+const tabbarEl = document.getElementById('tabbar');
 const tabTrackerEl = document.getElementById('tabTracker');
 const tabLeaderboardEl = document.getElementById('tabLeaderboard');
 const tabMapEl = document.getElementById('tabMap');
@@ -69,15 +78,27 @@ const tabGroupEl = document.getElementById('tabGroup');
 const trackerViewEl = document.getElementById('trackerView');
 const leaderboardViewEl = document.getElementById('leaderboardView');
 const mapViewEl = document.getElementById('mapView');
-const groupViewEl = document.getElementById('groupView');
 const groupBodyEl = document.getElementById('groupBody');
 const leaderboardListEl = document.getElementById('leaderboardList');
 const leaderboardRangeEl = document.getElementById('leaderboardRange');
+const leaderboardRangeLabelEl = document.getElementById('leaderboardRangeLabel');
+const leaderboardGroupNameEl = document.getElementById('leaderboardGroupName');
+const leaderboardSegmentEl = document.getElementById('leaderboardSegment');
+const leaderboardInviteBtnEl = document.getElementById('leaderboardInviteBtn');
+const myTopSpeedStatEl = document.getElementById('myTopSpeedStat');
+const myLongestTripStatEl = document.getElementById('myLongestTripStat');
 const shareToggleEl = document.getElementById('shareToggle');
-const shareStatusEl = document.getElementById('shareStatus');
+const shareSpeedToggleEl = document.getElementById('shareSpeedToggle');
+const sheetTogglesEl = document.getElementById('sheetToggles');
 const mapEmptyStateEl = document.getElementById('mapEmptyState');
-const speedBadgeEl = document.getElementById('speedBadge');
-const speedBadgeValueEl = document.getElementById('speedBadgeValue');
+const sheetEl = document.getElementById('sheet');
+const sheetHandleEl = document.getElementById('sheetHandle');
+const sheetSpeedValueEl = document.getElementById('sheetSpeedValue');
+const sheetDistanceEl = document.getElementById('sheetDistance');
+const sheetTimeEl = document.getElementById('sheetTime');
+const sharingPillEl = document.getElementById('sharingPill');
+const sharingStopBtnEl = document.getElementById('sharingStopBtn');
+const recenterBtnEl = document.getElementById('recenterBtn');
 const reportWidgetEl = document.getElementById('reportWidget');
 const reportBtnEl = document.getElementById('reportBtn');
 const reportPickerEl = document.getElementById('reportPicker');
@@ -158,6 +179,12 @@ function resetStats() {
   curSpeedEl.textContent = '0.0';
   topSpeedEl.textContent = '0.0';
   pointsEl.textContent = '0';
+  gpsAccuracyEl.textContent = 'GPS —';
+  speedHistory = [];
+  updateSpeedometer(0);
+  updateSpeedChart();
+  sheetDistanceEl.textContent = '0.00 km';
+  sheetTimeEl.textContent = '0:00';
 }
 
 // Redraw the numbers from the current trip data
@@ -165,12 +192,53 @@ function refreshStats() {
   pointsEl.textContent = tripPoints.length;
 
   if (startTime) {
-    durationEl.textContent = formatDuration(Date.now() - startTime);
+    const elapsed = formatDuration(Date.now() - startTime);
+    durationEl.textContent = elapsed;
+    sheetTimeEl.textContent = elapsed;
+    if (trackingState === 'tracking') setStatus(`RECORDING · ${elapsed}`, 'tracking');
+    if (trackingState === 'paused') setStatus(`PAUSED · ${elapsed}`, 'paused');
   }
 
   const stats = calculateTripStats(tripPoints);
   distanceEl.textContent = stats.distanceKm;
   avgSpeedEl.textContent = stats.avgSpeedKmh;
+  sheetDistanceEl.textContent = `${stats.distanceKm} km`;
+  updateSpeedChart();
+}
+
+// --- Speedometer (Tracker screen semicircle gauge) --------------------------
+const SPEED_GAUGE_MAX_KMH = 180; // clamps visually past this, doesn't clamp the real number
+const SPEEDO_ARC_LENGTH = Math.PI * 96; // matches the r=96 semicircle path in index.html
+
+function updateSpeedometer(speedKmh) {
+  const pct = Math.max(0, Math.min(1, (speedKmh || 0) / SPEED_GAUGE_MAX_KMH));
+  speedoFillEl.style.strokeDashoffset = String(SPEEDO_ARC_LENGTH * (1 - pct));
+}
+
+// --- Speed-over-time chart (last 10 minutes) --------------------------------
+const SPEED_CHART_WINDOW_MS = 10 * 60 * 1000;
+let speedHistory = []; // [{t, speed}], trimmed to the chart's rolling window
+
+function pushSpeedHistory(t, speedKmh) {
+  speedHistory.push({ t, speed: Math.max(0, speedKmh || 0) });
+  const cutoff = Date.now() - SPEED_CHART_WINDOW_MS;
+  while (speedHistory.length && speedHistory[0].t < cutoff) speedHistory.shift();
+}
+
+function updateSpeedChart() {
+  if (speedHistory.length < 2) {
+    speedChartLineEl.setAttribute('points', '');
+    return;
+  }
+  // A sane floor so a slow trip's small fluctuations don't look like peaks.
+  const maxSpeed = Math.max(40, ...speedHistory.map((p) => p.speed));
+  const oldestT = Date.now() - SPEED_CHART_WINDOW_MS;
+  const points = speedHistory.map((p) => {
+    const x = 300 * Math.max(0, Math.min(1, (p.t - oldestT) / SPEED_CHART_WINDOW_MS));
+    const y = 60 - (p.speed / maxSpeed) * 56; // 64-tall viewBox, 4px top margin, 60 baseline
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  speedChartLineEl.setAttribute('points', points.join(' '));
 }
 
 // Current speed: use the GPS-reported speed if we have it, otherwise
@@ -227,13 +295,23 @@ function loadPersistedActiveTrip() {
 // Shown whenever a trip is tracking or live sharing is on — whichever GPS
 // watch is actually running updates the value; the other stays dormant.
 
-function setSpeedBadgeValue(speedKmh) {
+// Mirrors whichever GPS watch is currently live (trip tracking or live
+// sharing) into the Map screen's bottom-sheet speed readout.
+function updateLiveSpeedReadout(speedKmh) {
   if (speedKmh == null || Number.isNaN(speedKmh)) return;
-  speedBadgeValueEl.textContent = Math.max(0, speedKmh).toFixed(0);
+  sheetSpeedValueEl.textContent = Math.max(0, speedKmh).toFixed(0);
 }
 
-function syncSpeedBadgeVisibility() {
-  speedBadgeEl.hidden = !(watchId != null || isSharingLocation);
+function syncLiveSpeedReadout() {
+  if (watchId == null && !isSharingLocation) {
+    sheetSpeedValueEl.textContent = '0';
+  }
+}
+
+function updateGpsAccuracy(position) {
+  const accuracy = position.coords.accuracy;
+  gpsAccuracyEl.textContent =
+    accuracy == null || Number.isNaN(accuracy) ? 'GPS —' : `GPS ±${Math.round(accuracy)} m`;
 }
 
 // Raw GPS speed only (no distance-fallback estimate) — used by the live
@@ -380,13 +458,16 @@ function renderTripHistory(trips) {
 }
 
 // --- View switching ----------------------------------------------------------
+// Map and Group are the SAME screen (one Leaflet map, one bottom sheet) —
+// Map opens it with the sheet collapsed (map-first), Group opens it with
+// the sheet expanded straight to the member list. See setSheetState()
+// further down.
 
-// Every tab: which button activates it and which section it shows.
 const VIEWS = {
   tracker:     { tab: tabTrackerEl,     section: trackerViewEl },
   leaderboard: { tab: tabLeaderboardEl, section: leaderboardViewEl },
   map:         { tab: tabMapEl,         section: mapViewEl },
-  group:       { tab: tabGroupEl,       section: groupViewEl },
+  group:       { tab: tabGroupEl,       section: mapViewEl },
 };
 
 let currentView = 'tracker';
@@ -396,30 +477,22 @@ function showView(name) {
 
   const leavingSection = VIEWS[currentView].section;
   const enteringSection = VIEWS[name].section;
+  const sameSection = leavingSection === enteringSection; // switching between Map <-> Group
 
   for (const [key, view] of Object.entries(VIEWS)) {
     view.tab.classList.toggle('tab--active', key === name);
+    view.tab.setAttribute('aria-selected', String(key === name));
   }
+  tabbarEl.classList.toggle('tabbar--light', name === 'leaderboard');
 
-  // Crossfade: fade the current view out, swap, fade the next one in.
-  leavingSection.classList.add('view--exit');
-
-  setTimeout(() => {
-    leavingSection.classList.remove('view--exit');
-    leavingSection.hidden = true;
-
-    enteringSection.hidden = false;
-    enteringSection.classList.add('view--enter');
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => enteringSection.classList.remove('view--enter'));
-    });
-
+  const finishSwitch = () => {
     currentView = name;
 
     // Leaflet can't measure a map that was hidden when it was created, so
-    // build it (once) and re-measure every time the Map tab is shown.
-    if (name === 'map') {
+    // build it (once) and re-measure every time the map screen is shown.
+    if (name === 'map' || name === 'group') {
       ensureMap();
+      setSheetState(name === 'group' ? 'expanded' : 'collapsed');
       setTimeout(() => {
         map.invalidateSize();
         if (tripRouteBounds) map.fitBounds(tripRouteBounds, { padding: [30, 30] });
@@ -438,6 +511,29 @@ function showView(name) {
     if (name === 'group') {
       refreshGroupMembers();
     }
+  };
+
+  // Switching between Map and Group is the same section staying on screen —
+  // just move the sheet, skip the hide/show crossfade entirely.
+  if (sameSection) {
+    finishSwitch();
+    return;
+  }
+
+  // Crossfade: fade the current view out, swap, fade the next one in.
+  leavingSection.classList.add('view--exit');
+
+  setTimeout(() => {
+    leavingSection.classList.remove('view--exit');
+    leavingSection.hidden = true;
+
+    enteringSection.hidden = false;
+    enteringSection.classList.add('view--enter');
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => enteringSection.classList.remove('view--enter'));
+    });
+
+    finishSwitch();
   }, 160);
 }
 
@@ -471,6 +567,9 @@ function ensureMap() {
 
   map = L.map('map').setView(MAP_CENTER, WORLD_ZOOM);
 
+  // Plain OSM tiles, darkened with a CSS filter (see .leaflet-tile-pane in
+  // style.css) rather than a hosted dark-tile service — CARTO's free dark
+  // basemap now requires an API key, and this needs none.
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors',
@@ -520,6 +619,83 @@ function promptForLocationOnce() {
   centerMapOnUser();
 }
 
+// Recenter button, top-right over the map — snaps to your live position if
+// you're sharing, otherwise asks for a fresh one-off fix.
+recenterBtnEl.addEventListener('click', () => {
+  ensureMap();
+  if (myLivePos) {
+    map.setView(myLivePos, Math.max(map.getZoom(), USER_ZOOM));
+    return;
+  }
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(
+    (position) => map.setView([position.coords.latitude, position.coords.longitude], USER_ZOOM),
+    () => {},
+    { maximumAge: 60 * 1000 }
+  );
+});
+
+// --- Bottom sheet (Map/Group screen) ----------------------------------------
+// Two states: 'collapsed' (just the peek row) and 'expanded' (full member
+// list) — see setSheetState() calls in showView(). Tap-to-toggle always
+// works; a pointer drag on the handle adds the native "flick the sheet"
+// feel, snapping to whichever state the drag ended closer to.
+
+function setSheetState(state) {
+  sheetEl.dataset.state = state;
+  sheetHandleEl.setAttribute('aria-expanded', String(state === 'expanded'));
+}
+
+(function setupSheetDrag() {
+  let dragging = false;
+  let startY = 0;
+  let startTranslate = 0;
+  let lastTranslate = 0;
+  const COLLAPSED_PEEK = 132; // keep in sync with .sheet's translateY in style.css
+
+  function currentTranslateY() {
+    const sheetHeight = sheetEl.getBoundingClientRect().height;
+    return sheetEl.dataset.state === 'expanded' ? 0 : Math.max(0, sheetHeight - COLLAPSED_PEEK);
+  }
+
+  sheetHandleEl.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    startY = e.clientY;
+    startTranslate = currentTranslateY();
+    lastTranslate = startTranslate;
+    sheetEl.dataset.state = 'dragging';
+    sheetEl.style.transform = `translateY(${startTranslate}px)`;
+    sheetHandleEl.setPointerCapture(e.pointerId);
+  });
+
+  sheetHandleEl.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const sheetHeight = sheetEl.getBoundingClientRect().height;
+    const maxTranslate = Math.max(0, sheetHeight - 40);
+    lastTranslate = Math.max(0, Math.min(maxTranslate, startTranslate + (e.clientY - startY)));
+    sheetEl.style.transform = `translateY(${lastTranslate}px)`;
+  });
+
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    const sheetHeight = sheetEl.getBoundingClientRect().height;
+    const collapsedTranslate = Math.max(0, sheetHeight - COLLAPSED_PEEK);
+    const movedEnough = Math.abs(lastTranslate - startTranslate) > 6;
+    sheetEl.style.transform = '';
+
+    const startedExpanded = startTranslate < collapsedTranslate / 2;
+    const nextState = movedEnough
+      ? (lastTranslate < collapsedTranslate / 2 ? 'expanded' : 'collapsed')
+      : (startedExpanded ? 'collapsed' : 'expanded'); // plain tap: just toggle
+
+    setSheetState(nextState);
+  }
+
+  sheetHandleEl.addEventListener('pointerup', endDrag);
+  sheetHandleEl.addEventListener('pointercancel', endDrag);
+})();
+
 // Simple top-down car silhouette: a rounded body with a darker rectangle
 // near the front (windshield) and another near the back (rear window), so
 // which way it's rotated to face is actually legible at marker size.
@@ -550,6 +726,35 @@ function makeCarIcon(color, headingDeg, name) {
         `<span class="map-pin__car" style="transform: rotate(${rotation}deg)">${CAR_SVG}</span>` +
         (name ? `<span class="map-pin__label">${name}</span>` : '') +
       `</span>`,
+  });
+}
+
+// --- Live member/"me" markers: 44px avatar circle + ring, with a label
+// underneath — a different look from the car icons above, which stay in
+// use for a finished trip's start/finish points on this same map.
+function initialsFor(name) {
+  return (name || '?').trim().charAt(0).toUpperCase() || '?';
+}
+
+const ME_ARROW_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M12 4 19 20 12 16 5 20Z" />' +
+  '</svg>';
+
+function makeAvatarIcon({ initials, isMe, headingDeg, label, speedText }) {
+  const rotation = Number.isFinite(headingDeg) ? headingDeg : 0;
+  const pinInner = isMe
+    ? `<span class="avatar-pin__arrow" style="transform: rotate(${rotation}deg)">${ME_ARROW_SVG}</span>`
+    : initials;
+  const labelHtml = label
+    ? `<span class="avatar-label">${label}${speedText ? `<span class="avatar-label__speed">${speedText}</span>` : ''}</span>`
+    : '';
+
+  return L.divIcon({
+    className: 'map-pin-wrap',
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
+    html: `<span class="avatar-pin${isMe ? ' avatar-pin--me' : ''}">${pinInner}</span>${labelHtml}`,
   });
 }
 
@@ -609,13 +814,25 @@ function renderTripRoute() {
 
 const ROAD_REPORT_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes, matches the iOS app
 
-// Colors reused from the existing palette — no new hues invented for this,
-// same reasoning as the group pin colors.
+// Colors + icons reused from the existing palette and the report picker's
+// own SVGs — no new hues or emoji invented for this.
 const ROAD_REPORT_META = {
-  police: { label: 'Police', color: '#5B9AA8', letter: 'P' },
-  hazard: { label: 'Hazard', color: '#E0A542', letter: 'H' },
-  accident: { label: 'Accident', color: '#D0453B', letter: 'A' },
-  traffic: { label: 'Traffic', color: '#5B9AA8', letter: 'T' },
+  police: {
+    label: 'Police', color: '#5B9AA8',
+    svg: '<path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6l-8-3Z" />',
+  },
+  hazard: {
+    label: 'Hazard', color: '#E0A542',
+    svg: '<path d="M12 3 2 20h20L12 3Z" /><path d="M12 10v4M12 17h.01" />',
+  },
+  accident: {
+    label: 'Accident', color: '#D0453B',
+    svg: '<circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" />',
+  },
+  traffic: {
+    label: 'Traffic', color: '#5B9AA8',
+    svg: '<rect x="3" y="10" width="18" height="7" rx="2" /><circle cx="7.5" cy="17" r="1.5" /><circle cx="16.5" cy="17" r="1.5" /><path d="M5 10 7 5h10l2 5" />',
+  },
 };
 
 let roadReports = [];      // [{id, user_id, type, lat, lng, created_at}] for your current group
@@ -625,9 +842,12 @@ function makeReportIcon(type) {
   const meta = ROAD_REPORT_META[type];
   return L.divIcon({
     className: 'map-pin-wrap',
-    iconSize: [26, 26],
-    iconAnchor: [13, 13],
-    html: `<span class="report-pin" style="--report-pin:${meta.color}">${meta.letter}</span>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    html:
+      `<span class="report-pin" style="--report-pin:${meta.color}">` +
+        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${meta.svg}</svg>` +
+      `</span>`,
   });
 }
 
@@ -744,11 +964,14 @@ let groupMembersCache = [];    // [{ profile: { id, display_name, color }, isMe 
 let presenceState = {};        // userId -> true, who currently has sharing ON
 let friendPositions = {};      // userId -> [lat, lng], last broadcast position received
 let friendHeadings = {};       // userId -> degrees (0-360) or null, last known heading
+let friendSpeeds = {};         // userId -> km/h, or null if that member has speed-sharing off
 let friendMarkers = {};        // userId -> Leaflet marker
 let myGroupChannel = null;     // the Realtime channel for the current group
-let isSharingLocation = false; // mirrors YOUR toggle
+let isSharingLocation = false; // mirrors YOUR "Share my live location" toggle
+let isSharingSpeed = false;    // mirrors YOUR "Show my speed" toggle — only affects what others see
 let myLivePos = null;          // your own last GPS fix while sharing
 let myHeading = null;          // your own last known heading (degrees), while sharing
+let myShareSpeedKmh = null;    // your own last known speed while sharing, for the broadcast payload
 let shareWatchId = null;       // geolocation watch dedicated to broadcasting
 let lastBroadcastAt = 0;
 
@@ -871,6 +1094,13 @@ function visibleGroupMembers() {
     .map((m) => m.profile);
 }
 
+// "Speed hidden" when that member has their own "Show my speed" toggle off
+// (or we simply haven't heard a reading yet) — never a fabricated number.
+function speedLabelFor(userId) {
+  const speed = friendSpeeds[userId];
+  return speed == null ? 'Speed hidden' : `${Math.round(speed)} km/h`;
+}
+
 // Rebuild all friend markers from scratch. Safe to call whenever the group or
 // presence state changes; a no-op until the map has been created.
 function rebuildFriendMarkers() {
@@ -883,7 +1113,12 @@ function rebuildFriendMarkers() {
     const pos = friendPositions[profile.id];
     if (!pos) return; // present but no GPS fix received yet
     const marker = L.marker(pos, {
-      icon: makeCarIcon(profile.color, friendHeadings[profile.id], profile.display_name),
+      icon: makeAvatarIcon({
+        initials: initialsFor(profile.display_name),
+        headingDeg: friendHeadings[profile.id],
+        label: profile.display_name,
+        speedText: speedLabelFor(profile.id),
+      }),
     }).addTo(friendLayer);
     friendMarkers[profile.id] = marker;
   });
@@ -891,7 +1126,7 @@ function rebuildFriendMarkers() {
 
 // A single broadcast tick from a group member — cheaper than a full rebuild.
 function updateFriendMarker(payload) {
-  const { user_id: userId, lat, lng, heading } = payload;
+  const { user_id: userId, lat, lng, heading, speed } = payload;
   if (!userId || userId === currentUserId) return; // ignore malformed/self payloads
 
   friendPositions[userId] = [lat, lng];
@@ -900,6 +1135,12 @@ function updateFriendMarker(payload) {
   if (Number.isFinite(heading) && heading >= 0) {
     friendHeadings[userId] = heading;
   }
+  // speed is null whenever that member has "Show my speed" switched off —
+  // distinct from "no reading yet" only in that both render as hidden here.
+  friendSpeeds[userId] = typeof speed === 'number' ? speed : null;
+
+  if (currentView === 'group') renderGroup(); // live distance/speed in the member list
+
   if (!presenceState[userId]) return; // not currently marked as sharing
 
   const member = groupMembersCache.find((m) => m.profile.id === userId);
@@ -907,10 +1148,15 @@ function updateFriendMarker(payload) {
 
   if (!friendLayer) return;
 
-  const icon = makeCarIcon(member.profile.color, friendHeadings[userId], member.profile.display_name);
+  const icon = makeAvatarIcon({
+    initials: initialsFor(member.profile.display_name),
+    headingDeg: friendHeadings[userId],
+    label: member.profile.display_name,
+    speedText: speedLabelFor(userId),
+  });
   if (friendMarkers[userId]) {
     friendMarkers[userId].setLatLng([lat, lng]);
-    friendMarkers[userId].setIcon(icon); // keeps the rotation in sync on every tick
+    friendMarkers[userId].setIcon(icon); // keeps the rotation/speed label in sync on every tick
   } else {
     friendMarkers[userId] = L.marker([lat, lng], { icon }).addTo(friendLayer);
   }
@@ -981,6 +1227,7 @@ function leaveGroupChannel() {
   presenceState = {};
   friendPositions = {};
   friendHeadings = {};
+  friendSpeeds = {};
   friendMarkers = {};
   if (friendLayer) friendLayer.clearLayers();
   roadReports = [];
@@ -1018,7 +1265,9 @@ function renderGroupSetup() {
   groupBodyEl.querySelector('#joinBtn').addEventListener('click', handleJoinGroup);
 }
 
-// In a group — name, invite code, member list, leave.
+// In a group — name, invite code, member list, leave. Lives inside the
+// Map/Group screen's bottom sheet; the two toggles (share location/speed)
+// are separate sheet markup in index.html, shown/hidden in onGroupChanged().
 function renderGroupHome() {
   const members = groupMembersCache;
 
@@ -1034,26 +1283,46 @@ function renderGroupHome() {
     </div>
 
     <h4 class="group__section-title">Members &middot; ${members.length}</h4>
-    <div class="leaderboard__list">
+    <div>
       ${members.map(renderMemberRow).join('')}
     </div>
 
     <button class="btn btn--stop btn--block" id="leaveBtn" type="button" style="margin-top: 14px;">Leave Group</button>`;
 
   groupBodyEl.querySelector('#copyCodeBtn').addEventListener('click', handleCopyCode);
-  groupBodyEl.querySelector('#inviteBtn').addEventListener('click', handleInvite);
+  groupBodyEl.querySelector('#inviteBtn').addEventListener('click', (e) => handleInvite(e.currentTarget));
   groupBodyEl.querySelector('#leaveBtn').addEventListener('click', handleLeaveGroup);
 }
 
-// One member row — reuses the leaderboard's .friend styling for consistency.
+// One member row: avatar initials, name, a status line (sharing / distance
+// away), and their speed (or "Speed hidden" — never a fabricated number).
 function renderMemberRow({ profile, isMe }) {
   const sharing = !!presenceState[profile.id] || (isMe && isSharingLocation);
+  const pos = isMe ? myLivePos : friendPositions[profile.id];
+
+  let sub = 'Location off';
+  let speedHtml = '';
+  if (isMe && sharing) {
+    sub = 'Sharing live';
+  } else if (sharing && pos) {
+    const distanceKm = myLivePos ? calculateDistance(myLivePos[0], myLivePos[1], pos[0], pos[1]) : null;
+    sub = distanceKm == null ? 'Driving' : `Driving &middot; ${distanceKm.toFixed(1)} km away`;
+    const speed = friendSpeeds[profile.id];
+    speedHtml = speed == null
+      ? '<span class="friend__speed--muted">Speed hidden</span>'
+      : `<span class="friend__speed">${Math.round(speed)} <span style="font-size:.7em;color:var(--muted)">km/h</span></span>`;
+  } else if (sharing) {
+    sub = 'Driving';
+  }
+
   return `
     <div class="friend">
+      <span class="friend__avatar${isMe ? ' friend__avatar--me' : ''}">${initialsFor(profile.display_name)}</span>
       <div class="friend__body">
         <span class="friend__name">${profile.display_name}${isMe ? ' <span class="tag">You</span>' : ''}</span>
+        <span class="friend__sub">${sub}</span>
       </div>
-      <span class="live-pill ${sharing ? 'live-pill--on' : 'live-pill--off'}">${sharing ? 'Sharing live' : 'Location off'}</span>
+      ${speedHtml}
     </div>`;
 }
 
@@ -1176,7 +1445,7 @@ async function handleLeaveGroup() {
   }
 
   myGroup = null;
-  shareToggleEl.checked = false;
+  shareToggleEl.setAttribute('aria-checked', 'false');
   await onGroupChanged();
 }
 
@@ -1192,15 +1461,18 @@ function handleCopyCode() {
 // (mobile Safari/Chrome), falling back to copying a ready-to-send message.
 // The link carries ?join=CODE, which consumeInviteLinkIfAny() picks up and
 // auto-joins on the other end — no manual code entry needed.
-async function handleInvite() {
-  const btn = groupBodyEl.querySelector('#inviteBtn');
+// `btn` is whichever invite button was clicked — the sheet's small one or
+// the Leaderboard's full-width one — so both can show their own loading
+// state and restore their own idle label afterward.
+async function handleInvite(btn) {
+  const idleLabel = btn.textContent;
   const message = `Join my group "${myGroup.name}" on Drive Tracker!`;
 
   btn.disabled = true;
   btn.textContent = 'Invite…';
   const link = await shortenLink(buildInviteLink(myGroup.invite_code));
   btn.disabled = false;
-  btn.textContent = 'Invite';
+  btn.textContent = idleLabel;
 
   if (navigator.share) {
     navigator.share({ title: 'Drive Tracker invite', text: message, url: link }).catch(() => {
@@ -1211,7 +1483,7 @@ async function handleInvite() {
 
   copyText(`${message} ${link}`).then((ok) => {
     btn.textContent = ok ? 'Invite copied' : 'Press ⌘C';
-    setTimeout(() => { btn.textContent = 'Invite'; }, 1500);
+    setTimeout(() => { btn.textContent = idleLabel; }, 1500);
   });
 }
 
@@ -1295,17 +1567,31 @@ async function onGroupChanged() {
 
   reportWidgetEl.hidden = !myGroup; // nowhere to report to without a group
   reportPickerEl.hidden = true;
+  sheetTogglesEl.hidden = !myGroup; // nothing to share location/speed with, either
+  leaderboardInviteBtnEl.hidden = !myGroup;
 
-  renderGroup();          // the Group tab
+  renderGroup();          // the Map/Group sheet
   syncShareToggleEnabled();
-  applyShareState();      // the share panel copy + your own "You" marker
+  applyShareState();      // sharing-pill state + your own "You" marker
   loadGroupLeaderboard(); // the Leaderboard tab
 }
 
-// Your share toggle only makes sense inside a group.
+// The two sheet toggles only make sense inside a group.
 function syncShareToggleEnabled() {
   shareToggleEl.disabled = !myGroup;
-  if (!myGroup) shareToggleEl.checked = false;
+  shareSpeedToggleEl.disabled = !myGroup;
+  if (!myGroup) {
+    shareToggleEl.setAttribute('aria-checked', 'false');
+    shareSpeedToggleEl.setAttribute('aria-checked', 'false');
+  }
+}
+
+function isSwitchOn(el) {
+  return el.getAttribute('aria-checked') === 'true';
+}
+
+function setSwitch(el, on) {
+  el.setAttribute('aria-checked', on ? 'true' : 'false');
 }
 
 // --- Share my live location toggle (PART 5) --------------------------------
@@ -1315,18 +1601,8 @@ function syncShareToggleEnabled() {
 // turning it off (or losing the tab/connection) stops both.
 
 function applyShareState() {
-  isSharingLocation = shareToggleEl.checked && !!myGroup;
-
-  if (!myGroup) {
-    shareStatusEl.textContent = 'Join a group to share your location';
-    shareStatusEl.className = 'share__status share__status--off';
-  } else {
-    shareStatusEl.textContent = isSharingLocation
-      ? `Sharing live with ${myGroup.name}`
-      : `Not sharing with ${myGroup.name}`;
-    shareStatusEl.className =
-      'share__status ' + (isSharingLocation ? 'share__status--on' : 'share__status--off');
-  }
+  isSharingLocation = isSwitchOn(shareToggleEl) && !!myGroup;
+  sharingPillEl.hidden = !isSharingLocation;
 
   if (isSharingLocation) {
     if (myGroupChannel) myGroupChannel.track({ user_id: currentUserId });
@@ -1336,7 +1612,7 @@ function applyShareState() {
     stopLocationBroadcast();
   }
 
-  syncSpeedBadgeVisibility();
+  syncLiveSpeedReadout();
   if (currentView === 'group') renderGroup(); // reflect your own pill instantly
 }
 
@@ -1351,7 +1627,7 @@ function updateMeMarker() {
     return;
   }
 
-  const icon = makeCarIcon('#E0A542', myHeading, 'You');
+  const icon = makeAvatarIcon({ isMe: true, headingDeg: myHeading, label: 'You' });
   if (meMarker) {
     meMarker.setLatLng(myLivePos);
     meMarker.setIcon(icon); // keeps the rotation in sync on every fix
@@ -1376,8 +1652,10 @@ function startLocationBroadcast() {
       if (Number.isFinite(position.coords.heading) && position.coords.heading >= 0) {
         myHeading = position.coords.heading;
       }
+      myShareSpeedKmh = speedKmhFromPosition(position);
       updateMeMarker();
-      setSpeedBadgeValue(speedKmhFromPosition(position));
+      updateLiveSpeedReadout(myShareSpeedKmh);
+      updateGpsAccuracy(position);
 
       const now = Date.now();
       if (now - lastBroadcastAt < BROADCAST_INTERVAL_MS) return;
@@ -1387,7 +1665,12 @@ function startLocationBroadcast() {
         myGroupChannel.send({
           type: 'broadcast',
           event: 'location',
-          payload: { user_id: currentUserId, lat, lng, heading: myHeading, ts: now },
+          // speed is only ever included while "Show my speed" is on —
+          // otherwise it goes out as null, same as not sharing it at all.
+          payload: {
+            user_id: currentUserId, lat, lng, heading: myHeading,
+            speed: isSharingSpeed ? myShareSpeedKmh : null, ts: now,
+          },
         });
       }
     },
@@ -1405,14 +1688,30 @@ function stopLocationBroadcast() {
   }
   myLivePos = null;
   myHeading = null;
+  myShareSpeedKmh = null;
   updateMeMarker();
-  if (watchId == null) speedBadgeValueEl.textContent = '0'; // no trip still running either
+  syncLiveSpeedReadout();
 }
 
-shareToggleEl.addEventListener('change', applyShareState);
+shareToggleEl.addEventListener('click', () => {
+  if (shareToggleEl.disabled) return;
+  setSwitch(shareToggleEl, !isSwitchOn(shareToggleEl));
+  applyShareState();
+});
+
+shareSpeedToggleEl.addEventListener('click', () => {
+  if (shareSpeedToggleEl.disabled) return;
+  isSharingSpeed = !isSwitchOn(shareSpeedToggleEl);
+  setSwitch(shareSpeedToggleEl, isSharingSpeed);
+});
+
+sharingStopBtnEl.addEventListener('click', () => {
+  setSwitch(shareToggleEl, false);
+  applyShareState();
+});
 
 // Initial state: you're not in a group yet, so render the Create/Join screen
-// and disable the group-scoped share toggle until you join one.
+// and disable the group-scoped toggles until you join one.
 syncShareToggleEnabled();
 renderGroup();
 applyShareState();
@@ -1422,8 +1721,12 @@ applyShareState();
 // current group)
 // ============================================================================
 
+const RANGE_LABELS = { week: 'This week', month: 'This month', all: 'All time' };
+const METRIC_LABELS = { distance: 'km total', topSpeed: 'km/h top', trips: 'trips' };
+
 let leaderboardRange = 'all'; // 'week' | 'month' | 'all'
-let leaderboardCache = [];    // [{ name, totalKm, trips, longestKm }]
+let leaderboardMetric = 'distance'; // 'distance' | 'topSpeed' | 'trips'
+let leaderboardCache = [];    // [{ name, isMe, totalKm, trips, longestKm, topSpeedKmh }]
 
 function computeRangeSince(range) {
   if (range === 'all') return null;
@@ -1436,8 +1739,13 @@ function computeRangeSince(range) {
 // Pull every group member's trips (RLS allows seeing a groupmate's trip
 // rows), aggregate per user in JS, and render.
 async function loadGroupLeaderboard() {
+  leaderboardGroupNameEl.textContent = myGroup ? myGroup.name : 'Your group';
+  leaderboardRangeLabelEl.textContent = `Leaderboard · ${RANGE_LABELS[leaderboardRange]}`;
+
   if (!myGroup || groupMembersCache.length === 0) {
     leaderboardCache = [];
+    myTopSpeedStatEl.textContent = '—';
+    myLongestTripStatEl.textContent = '—';
     renderLeaderboard();
     return;
   }
@@ -1447,7 +1755,7 @@ async function loadGroupLeaderboard() {
   const memberIds = groupMembersCache.map((m) => m.profile.id);
   let query = supabaseClient
     .from('trips')
-    .select('user_id, distance_km, created_at')
+    .select('user_id, distance_km, top_speed_kmh, created_at')
     .in('user_id', memberIds);
 
   const since = computeRangeSince(leaderboardRange);
@@ -1464,64 +1772,93 @@ async function loadGroupLeaderboard() {
   const totalsByUser = {};
   (data || []).forEach((trip) => {
     const km = Number(trip.distance_km) || 0;
-    const entry = totalsByUser[trip.user_id] || { totalKm: 0, trips: 0, longestKm: 0 };
+    const topSpeed = Number(trip.top_speed_kmh) || 0;
+    const entry = totalsByUser[trip.user_id] || { totalKm: 0, trips: 0, longestKm: 0, topSpeedKmh: 0 };
     entry.totalKm += km;
     entry.trips += 1;
     entry.longestKm = Math.max(entry.longestKm, km);
+    entry.topSpeedKmh = Math.max(entry.topSpeedKmh, topSpeed);
     totalsByUser[trip.user_id] = entry;
   });
 
   leaderboardCache = groupMembersCache.map((m) => {
-    const totals = totalsByUser[m.profile.id] || { totalKm: 0, trips: 0, longestKm: 0 };
-    return {
-      name: m.profile.display_name + (m.isMe ? ' (You)' : ''),
-      totalKm: totals.totalKm,
-      trips: totals.trips,
-      longestKm: totals.longestKm,
-    };
+    const totals = totalsByUser[m.profile.id] || { totalKm: 0, trips: 0, longestKm: 0, topSpeedKmh: 0 };
+    return { name: m.profile.display_name, isMe: m.isMe, ...totals };
   });
+
+  const mine = leaderboardCache.find((f) => f.isMe);
+  myTopSpeedStatEl.textContent = mine && mine.topSpeedKmh > 0 ? `${mine.topSpeedKmh.toFixed(1)} km/h` : '—';
+  myLongestTripStatEl.textContent = mine && mine.longestKm > 0 ? `${mine.longestKm.toFixed(1)} km` : '—';
 
   renderLeaderboard();
 }
 
-// Build the ranked leaderboard rows for the current time range.
+function metricValue(friend, metric) {
+  if (metric === 'topSpeed') return friend.topSpeedKmh;
+  if (metric === 'trips') return friend.trips;
+  return friend.totalKm;
+}
+
+function formatMetricValue(metric, value) {
+  if (metric === 'trips') return String(value);
+  return value.toFixed(1);
+}
+
+function formatGapText(friend, metric, leaderValue) {
+  const tripsText = `${friend.trips} trip${friend.trips === 1 ? '' : 's'}`;
+  if (metric === 'trips') return tripsText;
+
+  const gap = leaderValue - metricValue(friend, metric);
+  const unit = metric === 'topSpeed' ? 'km/h slower' : 'km behind P1';
+  return gap > 0.05 ? `${tripsText} · ${gap.toFixed(1)} ${unit}` : tripsText;
+}
+
+// Build the ranked leaderboard for the current time range + metric: a dark
+// "leader card" for P1, then the rest as rows on a plain card beneath it.
 function renderLeaderboard() {
   if (!myGroup) {
     leaderboardListEl.innerHTML = '<p class="hint">Join a group to see its leaderboard.</p>';
     return;
   }
 
-  if (leaderboardCache.length === 0) {
+  const ranked = leaderboardCache
+    .slice()
+    .sort((a, b) => metricValue(b, leaderboardMetric) - metricValue(a, leaderboardMetric));
+
+  if (ranked.length === 0 || metricValue(ranked[0], leaderboardMetric) <= 0) {
     leaderboardListEl.innerHTML = '<p class="hint">No trips recorded in this range yet.</p>';
     return;
   }
 
-  // Copy first (slice) so we never reorder the cache, then sort by total
-  // distance, biggest first.
-  const ranked = leaderboardCache
-    .slice()
-    .sort((a, b) => b.totalKm - a.totalKm);
+  const leader = ranked[0];
+  const leaderValue = metricValue(leader, leaderboardMetric);
+  const unit = METRIC_LABELS[leaderboardMetric];
 
-  leaderboardListEl.innerHTML = ranked.map((friend, index) => {
-    const position = index + 1;          // P1, P2, P3 …
-    const isP1 = position === 1;
-    // The pack visibly thins out below P1: P2/P3 get a slight boost,
-    // P4+ fade slightly — P1's own styling is untouched.
-    const tierClass = isP1 ? '' : position <= 3 ? ' friend--rank-upper' : ' friend--rank-lower';
+  const leaderHtml = `
+    <div class="leader-card">
+      <span class="leader-card__badge">P1</span>
+      <div class="leader-card__body">
+        <span class="leader-card__name">${leader.name}${leader.isMe ? ' (You)' : ''}</span>
+        <span class="leader-card__trips">${leader.trips} trip${leader.trips === 1 ? '' : 's'}</span>
+      </div>
+      <span class="leader-card__value">${formatMetricValue(leaderboardMetric, leaderValue)}<small>${unit}</small></span>
+    </div>`;
 
-    return `
-      <div class="friend${isP1 ? ' friend--p1' : ''}${tierClass}">
-        <span class="pos-badge${isP1 ? ' pos-badge--p1' : ''}">P${position}</span>
-        <div class="friend__body">
-          <span class="friend__name">${friend.name}</span>
-          <div class="friend__stats">
-            <span><strong>${friend.totalKm.toFixed(1)}</strong> km total</span>
-            <span><strong>${friend.trips}</strong> trips</span>
-            <span><strong>${friend.longestKm.toFixed(1)}</strong> km longest</span>
+  const rest = ranked.slice(1).filter((f) => f.trips > 0);
+  const rowsHtml = rest.length === 0 ? '' : `
+    <div class="rank-card">
+      ${rest.map((friend, index) => `
+        <div class="rank-row">
+          <span class="rank-badge">P${index + 2}</span>
+          <div class="rank-row__body">
+            <span class="rank-row__name">${friend.name}${friend.isMe ? ' (You)' : ''}</span>
+            <span class="rank-row__sub">${formatGapText(friend, leaderboardMetric, leaderValue)}</span>
           </div>
-        </div>
-      </div>`;
-  }).join('');
+          <span class="rank-row__value">${formatMetricValue(leaderboardMetric, metricValue(friend, leaderboardMetric))}</span>
+        </div>`).join('')}
+    </div>`;
+
+  leaderboardListEl.innerHTML = leaderHtml + rowsHtml;
 }
 
 function setLeaderboardRange(range) {
@@ -1540,14 +1877,52 @@ leaderboardRangeEl.addEventListener('click', (e) => {
   if (btn) setLeaderboardRange(btn.dataset.range);
 });
 
+leaderboardSegmentEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('.segmented__btn');
+  if (!btn || btn.dataset.metric === leaderboardMetric) return;
+  leaderboardMetric = btn.dataset.metric;
+
+  leaderboardSegmentEl.querySelectorAll('.segmented__btn').forEach((b) => {
+    const active = b === btn;
+    b.classList.toggle('segmented__btn--active', active);
+    b.setAttribute('aria-selected', String(active));
+  });
+
+  renderLeaderboard();
+});
+
+leaderboardInviteBtnEl.addEventListener('click', (e) => {
+  if (myGroup) handleInvite(e.currentTarget);
+});
+
 renderLeaderboard(); // shows the "join a group" prompt until real data loads
 
 // --- Buttons -----------------------------------------------------------
 
-// Shared by a fresh Start Trip tap and by resuming a trip that survived a
-// page reload — tripPoints/startTime/topSpeed are already set by the
-// caller either way, this just wires up the actual GPS watch + UI state.
+// 'idle' -> single "Start trip" button. 'tracking' -> Pause + End trip.
+// 'paused' -> Resume + End trip (End trip still works mid-pause).
+function syncTrackingControls() {
+  const idle = trackingState === 'idle';
+  const paused = trackingState === 'paused';
+
+  startBtn.hidden = !idle;
+  activeControlsEl.hidden = idle;
+
+  pauseBtnLabelEl.textContent = paused ? 'Resume' : 'Pause';
+  pauseBtn.classList.toggle('btn--start', paused);
+  pauseBtn.classList.toggle('btn--outline', !paused);
+  pauseBtnIconEl.innerHTML = paused
+    ? '<polygon points="7,5 19,12 7,19" />'
+    : '<rect x="7" y="5" width="3.5" height="14" rx="1" /><rect x="13.5" y="5" width="3.5" height="14" rx="1" />';
+}
+
+// Shared by a fresh Start Trip tap, resuming from Pause, and resuming a
+// trip that survived a page reload — tripPoints/startTime/topSpeed are
+// already set by the caller either way, this just wires up the actual GPS
+// watch + UI state.
 function beginTracking(statusText) {
+  trackingState = 'tracking';
+  syncTrackingControls();
   setStatus(statusText, 'tracking');
   startBtn.disabled = true;
   stopBtn.disabled = false;
@@ -1565,14 +1940,18 @@ function beginTracking(statusText) {
       tripPoints.push(point);
 
       const speed = currentSpeedKmh(position);
+      point.speed = speed; // stored for the "speed over time" chart + trip resume
       curSpeedEl.textContent = speed.toFixed(1);
-      setSpeedBadgeValue(speed);
+      updateSpeedometer(speed);
+      updateLiveSpeedReadout(speed);
+      updateGpsAccuracy(position);
+      pushSpeedHistory(position.timestamp, speed);
       if (speed > topSpeed) {
         topSpeed = speed;
         topSpeedEl.textContent = topSpeed.toFixed(1);
       }
 
-      refreshStats();
+      refreshStats(); // also redraws the speed chart from speedHistory
       persistActiveTrip(); // survive a reload mid-trip — see the comment above its definition
       console.log('New point:', point);
     },
@@ -1598,15 +1977,41 @@ function beginTracking(statusText) {
         navigator.geolocation.clearWatch(watchId);
         watchId = null;
         clearInterval(timerId);
+        trackingState = 'idle';
+        syncTrackingControls();
         startBtn.disabled = false;
         stopBtn.disabled = true;
-        syncSpeedBadgeVisibility();
+        syncLiveSpeedReadout();
       }
     },
     { enableHighAccuracy: true }
   );
-  syncSpeedBadgeVisibility();
+  syncLiveSpeedReadout();
 }
+
+// Pause keeps tripPoints/startTime/topSpeed intact and just stops the GPS
+// watch + timer — Resume (the same button, relabelled) hands back into
+// beginTracking() to pick the same trip up again.
+function pauseTracking() {
+  if (trackingState !== 'tracking') return;
+  if (watchId != null) navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+  clearInterval(timerId);
+  trackingState = 'paused';
+  syncTrackingControls();
+  syncLiveSpeedReadout();
+  const elapsed = startTime ? formatDuration(Date.now() - startTime) : '0:00';
+  setStatus(`PAUSED · ${elapsed}`, 'paused');
+  persistActiveTrip();
+}
+
+pauseBtn.addEventListener('click', () => {
+  if (trackingState === 'tracking') {
+    pauseTracking();
+  } else if (trackingState === 'paused') {
+    beginTracking('Tracking…');
+  }
+});
 
 // If a trip was still in progress the last time this tab was alive, pick
 // it back up instead of silently losing it — see the comment above
@@ -1624,7 +2029,15 @@ function tryResumeActiveTripOnce() {
   startTime = saved.startTime || Date.now();
   topSpeed = saved.topSpeed || 0;
   topSpeedEl.textContent = topSpeed.toFixed(1);
-  refreshStats(); // redraw distance/duration/avg from the restored points
+
+  // Re-seed the speed chart from whatever points fall in its window —
+  // otherwise a resume starts the chart empty even mid-trip.
+  const cutoff = Date.now() - SPEED_CHART_WINDOW_MS;
+  speedHistory = tripPoints
+    .filter((p) => typeof p.speed === 'number' && p.timestamp >= cutoff)
+    .map((p) => ({ t: p.timestamp, speed: p.speed }));
+
+  refreshStats(); // redraw distance/duration/avg/chart from the restored points
   if (routeLayer) routeLayer.clearLayers();
   tripRouteBounds = null;
 
@@ -1648,13 +2061,16 @@ startBtn.addEventListener('click', () => {
 });
 
 stopBtn.addEventListener('click', () => {
-  navigator.geolocation.clearWatch(watchId);
+  if (watchId != null) navigator.geolocation.clearWatch(watchId);
   watchId = null;
   clearInterval(timerId);
+  trackingState = 'idle';
+  syncTrackingControls();
   startBtn.disabled = false;
   stopBtn.disabled = true;
   curSpeedEl.textContent = '0.0';
-  syncSpeedBadgeVisibility();
+  updateSpeedometer(0);
+  syncLiveSpeedReadout();
   clearPersistedActiveTrip(); // this trip is done, successfully saved or not
 
   const stats = calculateTripStats(tripPoints);
@@ -1732,6 +2148,7 @@ const AUTH_BUTTON_LABEL = { login: 'Log In', signup: 'Create Account', save: 'Sa
 
 function showAuthScreen() {
   appViewEl.hidden = true;
+  tabbarEl.hidden = true;
   logoutBtnEl.hidden = true;
   statusEl.hidden = true;         // the "Not tracking" pill belongs to the app
   guestBannerEl.hidden = true;
@@ -1742,6 +2159,7 @@ function showAuthScreen() {
 function showAppScreen() {
   authViewEl.hidden = true;
   appViewEl.hidden = false;
+  tabbarEl.hidden = false;
   logoutBtnEl.hidden = false;
   statusEl.hidden = false;
   syncGuestBanner();

@@ -2,16 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Drive Tracker</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main class="app">
     <header class="app__header">
       <h1 class="app__title">Drive Tracker</h1>
-      <p id="status" class="status status--idle">Not tracking</p>
       <button id="logoutBtn" class="app__logout" type="button" hidden>Log out</button>
     </header>
 
@@ -67,47 +69,72 @@
 
     <!-- ============ App (shown only when logged in) ============ -->
     <div id="appView" hidden>
-      <nav class="tabs" aria-label="Views">
-        <button id="tabTracker" class="tab tab--active" type="button">Tracker</button>
-        <button id="tabLeaderboard" class="tab" type="button">Leaderboard</button>
-        <button id="tabMap" class="tab" type="button">Map</button>
-        <button id="tabGroup" class="tab" type="button">Group</button>
-      </nav>
 
-      <!-- ============ Tracker view ============ -->
-      <section id="trackerView" class="view">
+      <!-- ============ Tracker screen — "Driving mode" ============ -->
+      <section id="trackerView" class="view screen screen--tracker">
         <div class="welcome-banner" id="welcomeBanner" hidden>
-          <p class="welcome-banner__text">Tap Start Trip to begin tracking — allow location access when your browser asks.</p>
+          <p class="welcome-banner__text">Tap Start trip to begin tracking — allow location access when your browser asks.</p>
           <button class="welcome-banner__dismiss" id="welcomeDismiss" type="button" aria-label="Dismiss">&times;</button>
         </div>
 
-        <section class="stats" aria-label="Trip statistics">
-          <div class="stat stat--hero">
-            <span class="stat__value" id="distance">0.00</span>
-            <span class="stat__label">Distance (km)</span>
-            <span class="stat__note"><span id="points">0</span> GPS points</span>
+        <div class="record-row">
+          <p id="status" class="status status--idle">Not tracking</p>
+          <span class="gps-pill" id="gpsAccuracy">GPS —</span>
+        </div>
+
+        <div class="speedo" aria-hidden="true">
+          <svg class="speedo__arc" viewBox="0 0 220 124">
+            <path class="speedo__track" d="M14,112 A96,96 0 0 1 206,112" />
+            <path class="speedo__fill" id="speedoFill" d="M14,112 A96,96 0 0 1 206,112" />
+          </svg>
+          <div class="speedo__readout">
+            <span class="speedo__value" id="curSpeed">0.0</span>
+            <span class="speedo__unit">KM/H</span>
           </div>
-          <div class="stat stat--context">
-            <span class="stat__value" id="duration">0:00</span>
-            <span class="stat__label">Duration</span>
+        </div>
+
+        <section class="stat-grid" aria-label="Trip statistics">
+          <div class="stat-card">
+            <span class="stat-card__value" id="distance">0.00</span>
+            <span class="stat-card__label">Distance <span class="unit">km</span></span>
           </div>
-          <div class="stat stat--context">
-            <span class="stat__value" id="avgSpeed">0.0</span>
-            <span class="stat__label">Avg speed (km/h)</span>
+          <div class="stat-card">
+            <span class="stat-card__value" id="avgSpeed">0.0</span>
+            <span class="stat-card__label">Avg speed <span class="unit">km/h</span></span>
           </div>
-          <div class="stat stat--live">
-            <span class="stat__value" id="curSpeed">0.0</span>
-            <span class="stat__label">Current speed (km/h)</span>
+          <div class="stat-card stat-card--accent">
+            <span class="stat-card__value" id="topSpeed">0.0</span>
+            <span class="stat-card__label">Top speed <span class="unit">km/h</span></span>
           </div>
-          <div class="stat stat--live stat--pb">
-            <span class="stat__value" id="topSpeed">0.0</span>
-            <span class="stat__label">Top speed (km/h)</span>
+          <div class="stat-card">
+            <span class="stat-card__value" id="duration">0:00</span>
+            <span class="stat-card__label">Moving time</span>
           </div>
+        </section>
+        <p class="hint hint--tight"><span id="points">0</span> GPS points logged</p>
+
+        <section class="chart-card" aria-label="Speed over the last 10 minutes">
+          <h2 class="chart-card__title">Speed over time</h2>
+          <svg class="chart" id="speedChart" viewBox="0 0 300 64" preserveAspectRatio="none" aria-hidden="true">
+            <polyline class="chart__line" id="speedChartLine" points="" />
+          </svg>
         </section>
 
         <div class="controls">
-          <button id="startBtn" class="btn btn--start" type="button">Start Trip</button>
-          <button id="stopBtn" class="btn btn--stop" type="button" disabled>Stop Trip</button>
+          <button id="startBtn" class="btn btn--start btn--block" type="button">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="7,5 19,12 7,19" /></svg>
+            Start trip
+          </button>
+          <div class="controls__row" id="activeControls" hidden>
+            <button id="pauseBtn" class="btn btn--outline" type="button">
+              <svg class="icon" id="pauseBtnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="5" width="3.5" height="14" rx="1" /><rect x="13.5" y="5" width="3.5" height="14" rx="1" /></svg>
+              <span id="pauseBtnLabel">Pause</span>
+            </button>
+            <button id="stopBtn" class="btn btn--end-trip btn--pill" type="button" disabled>
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+              End trip
+            </button>
+          </div>
         </div>
 
         <p class="auth__error" id="saveError" hidden></p>
@@ -123,74 +150,158 @@
         </section>
       </section>
 
-      <!-- ============ Leaderboard view ============ -->
-      <section id="leaderboardView" class="view" hidden>
-        <h2 class="leaderboard__title">Distance Leaderboard</h2>
+      <!-- ============ Map + Group screen — "Map-first group drive" ============
+           The Map and Group tabs both show this same section: Map opens it
+           with the sheet collapsed (map-first), Group opens it with the
+           sheet expanded to the full member list. See showView() in
+           script.js — there is deliberately only one Leaflet map instance. -->
+      <section id="mapView" class="view screen screen--map" hidden>
+        <div class="map-wrap">
+          <div id="map"></div>
+        </div>
+
+        <!-- These float above the map at the SAME level as the sheet below
+             (not nested inside .map-wrap) — position:fixed + z-index only
+             ranks correctly against siblings, not across a parent's own
+             stacking context, so nesting them in .map-wrap previously let
+             the sheet silently swallow clicks meant for these controls. -->
+        <div class="map-pill map-pill--sharing" id="sharingPill" hidden>
+          <span class="map-pill__dot"></span>
+          <span>Sharing live</span>
+          <button class="map-pill__action" id="sharingStopBtn" type="button">Stop</button>
+        </div>
+
+        <button class="map-round-btn" id="recenterBtn" type="button" aria-label="Recenter map on me">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+          </svg>
+        </button>
+
+        <p class="map-empty" id="mapEmptyState">Complete a trip to see your route here</p>
+
+        <div class="report-widget" id="reportWidget" hidden>
+          <div class="report-picker" id="reportPicker" hidden>
+            <button class="report-option" data-type="accident" type="button">
+              <span class="report-option__icon report-option__icon--danger">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
+              </span>
+              Accident
+            </button>
+            <button class="report-option" data-type="hazard" type="button">
+              <span class="report-option__icon report-option__icon--accent">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20L12 3Z" /><path d="M12 10v4M12 17h.01" /></svg>
+              </span>
+              Hazard
+            </button>
+            <button class="report-option" data-type="police" type="button">
+              <span class="report-option__icon report-option__icon--secondary">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6l-8-3Z" /></svg>
+              </span>
+              Police
+            </button>
+            <button class="report-option" data-type="traffic" type="button">
+              <span class="report-option__icon report-option__icon--secondary">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="10" width="18" height="7" rx="2" /><circle cx="7.5" cy="17" r="1.5" /><circle cx="16.5" cy="17" r="1.5" /><path d="M5 10 7 5h10l2 5" /></svg>
+              </span>
+              Traffic
+            </button>
+          </div>
+          <button class="report-btn" id="reportBtn" type="button" aria-label="Report something">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20L12 3Z" /><path d="M12 10v4M12 17h.01" /></svg>
+          </button>
+        </div>
+
+        <div class="sheet" id="sheet" data-state="collapsed">
+          <button class="sheet__handle" id="sheetHandle" type="button" aria-label="Expand details" aria-expanded="false">
+            <span class="sheet__grip"></span>
+          </button>
+
+          <div class="sheet__peek">
+            <div class="sheet__speed-block">
+              <span class="sheet__speed" id="sheetSpeedValue">0</span>
+              <span class="sheet__speed-unit">km/h</span>
+            </div>
+            <div class="sheet__meta">
+              <span id="sheetDistance">0.00 km</span>
+              <span id="sheetTime">0:00</span>
+            </div>
+          </div>
+
+          <div class="sheet__scroll" id="sheetScroll">
+            <div id="groupBody"></div>
+
+            <div class="sheet__toggles" id="sheetToggles" hidden>
+              <div class="toggle-row">
+                <span>Share my live location</span>
+                <button class="switch" id="shareToggle" type="button" role="switch" aria-checked="false" aria-label="Share my live location"></button>
+              </div>
+              <div class="toggle-row">
+                <span>Show my speed</span>
+                <button class="switch" id="shareSpeedToggle" type="button" role="switch" aria-checked="false" aria-label="Show my speed to the group"></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ Leaderboard screen — "Paddock" (light theme) ============ -->
+      <section id="leaderboardView" class="view screen screen--leaderboard theme-light" hidden>
+        <div class="paddock-header">
+          <p class="paddock-eyebrow" id="leaderboardRangeLabel">Leaderboard · This week</p>
+          <h2 class="paddock-group-name" id="leaderboardGroupName">Your group</h2>
+        </div>
+
         <div class="range-filter" id="leaderboardRange" role="group" aria-label="Time range">
           <button class="range-filter__btn" data-range="week" type="button">This Week</button>
           <button class="range-filter__btn" data-range="month" type="button">This Month</button>
           <button class="range-filter__btn range-filter__btn--active" data-range="all" type="button">All Time</button>
         </div>
+
+        <div class="segmented" id="leaderboardSegment" role="tablist" aria-label="Rank by">
+          <button class="segmented__btn segmented__btn--active" data-metric="distance" type="button" role="tab" aria-selected="true">Distance</button>
+          <button class="segmented__btn" data-metric="topSpeed" type="button" role="tab" aria-selected="false">Top speed</button>
+          <button class="segmented__btn" data-metric="trips" type="button" role="tab" aria-selected="false">Trips</button>
+        </div>
+
         <div class="leaderboard__list" id="leaderboardList"></div>
-        <p class="hint">Ranked by total distance driven within your group, for the selected time range.</p>
-      </section>
 
-      <!-- ============ Map view ============ -->
-      <section id="mapView" class="view" hidden>
-        <div class="share">
-          <div class="share__text">
-            <div class="share__title">Share my live location with this group</div>
-            <div class="share__status share__status--off" id="shareStatus">Not sharing</div>
+        <div class="paddock-stats">
+          <div class="paddock-stat">
+            <span class="paddock-stat__label">Your top speed</span>
+            <span class="paddock-stat__value" id="myTopSpeedStat">—</span>
           </div>
-          <label class="switch">
-            <input type="checkbox" id="shareToggle">
-            <span class="switch__slider"></span>
-          </label>
-        </div>
-
-        <div class="map-wrap">
-          <div id="map"></div>
-          <p class="map-empty" id="mapEmptyState">Complete a trip to see your route here</p>
-
-          <div class="speed-badge" id="speedBadge" hidden>
-            <span class="speed-badge__value" id="speedBadgeValue">0</span>
-            <span class="speed-badge__unit">km/h</span>
-          </div>
-
-          <div class="report-widget" id="reportWidget" hidden>
-            <div class="report-picker" id="reportPicker" hidden>
-              <button class="report-option" data-type="accident" type="button">
-                <span class="report-option__dot" style="background:#D0453B"></span>Accident
-              </button>
-              <button class="report-option" data-type="hazard" type="button">
-                <span class="report-option__dot" style="background:#E0A542"></span>Hazard
-              </button>
-              <button class="report-option" data-type="police" type="button">
-                <span class="report-option__dot" style="background:#5B9AA8"></span>Police
-              </button>
-              <button class="report-option" data-type="traffic" type="button">
-                <span class="report-option__dot" style="background:#5B9AA8"></span>Traffic
-              </button>
-            </div>
-            <button class="report-btn" id="reportBtn" type="button" aria-label="Report something">!</button>
+          <div class="paddock-stat">
+            <span class="paddock-stat__label">Longest trip</span>
+            <span class="paddock-stat__value" id="myLongestTripStat">—</span>
           </div>
         </div>
 
-        <ul class="legend">
-          <li><span class="legend__dot" style="background:#E0A542"></span>You / route / start</li>
-          <li><span class="legend__dot" style="background:#EDEDEA"></span>Trip finish</li>
-          <li><span class="legend__dot" style="background:#5B9AA8"></span>Group members sharing live</li>
-        </ul>
+        <button class="btn btn--invite" id="leaderboardInviteBtn" type="button" hidden>Invite a friend</button>
 
-        <p class="hint">Only group members with live sharing switched ON appear here. Your route appears after you stop a trip.</p>
-      </section>
-
-      <!-- ============ Group view ============ -->
-      <section id="groupView" class="view" hidden>
-        <div id="groupBody"></div>
+        <p class="hint">Ranked within your group, for the selected time range.</p>
       </section>
     </div>
   </main>
+
+  <!-- ============ Bottom tab bar ============ -->
+  <nav class="tabbar" id="tabbar" aria-label="Views" hidden>
+    <button id="tabTracker" class="tab tab--active" type="button" role="tab" aria-selected="true">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="8" /><path d="M12 13 15.5 9.5M8 13a4 4 0 0 1 4-4" /><path d="M12 3v2M3 13H1M23 13h-2" /></svg>
+      <span>Tracker</span>
+    </button>
+    <button id="tabMap" class="tab" type="button" role="tab" aria-selected="false">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 20 3 17.5V5L9 7.5l6-2.5 6 2.5v12.5L15 20l-6-2.5Z" /><path d="M9 7.5v12.5M15 5v12.5" /></svg>
+      <span>Map</span>
+    </button>
+    <button id="tabLeaderboard" class="tab" type="button" role="tab" aria-selected="false">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="12" width="4" height="8" rx="1" /><rect x="10" y="7" width="4" height="13" rx="1" /><rect x="16" y="3" width="4" height="17" rx="1" /></svg>
+      <span>Leaderboard</span>
+    </button>
+    <button id="tabGroup" class="tab" type="button" role="tab" aria-selected="false">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3" /><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" /><circle cx="17.5" cy="9.5" r="2.3" /><path d="M15.7 14.2c2.5.3 4.3 2.5 4.3 5.1" /></svg>
+      <span>Group</span>
+    </button>
+  </nav>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
