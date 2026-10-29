@@ -139,6 +139,16 @@ body {
 .guest-banner__text { margin: 0 0 6px; font-size: 0.82rem; color: var(--text); line-height: 1.4; }
 .guest-banner__action { font-size: 0.82rem; }
 
+.banner-inline { flex: 1; }
+.banner-inline__row { display: flex; gap: 8px; margin-top: 8px; }
+.banner-inline__row .field { margin-bottom: 0; flex: 1; min-height: 38px; }
+.banner-inline__row .btn--sm { flex-shrink: 0; }
+
+/* ============ Friends screen ============ */
+.friends__title { font-size: 1.3rem; font-weight: 800; margin: 4px 0 14px; }
+#friendSearchInput { margin-bottom: 14px; }
+#friendSearchResults:empty, #friendRequestsList:empty { display: none; }
+
 /* ============ Status pill (Tracker top row) ============ */
 .record-row {
   display: flex; align-items: center; justify-content: space-between;
@@ -451,6 +461,7 @@ body {
 .friend__sub { font-size: 0.78rem; color: var(--muted); }
 .friend__speed { font-family: var(--font-num); font-weight: 700; font-size: 0.88rem; color: var(--text); white-space: nowrap; }
 .friend__speed--muted { color: var(--muted); font-weight: 600; font-size: 0.74rem; white-space: nowrap; }
+.friend__actions { display: flex; gap: 6px; flex-shrink: 0; }
 .tag { font-size: 0.66rem; font-weight: 700; color: var(--bg); background: var(--secondary); border-radius: var(--radius-pill); padding: 1px 7px; }
 
 /* ============ Leaflet overrides + markers ============ */
@@ -613,6 +624,16 @@ body {
 .auth__error--info { background: var(--secondary-dim); color: var(--secondary); border-color: var(--secondary); }
 
 .auth__toggle { text-align: center; font-size: 0.85rem; color: var(--muted); margin: 14px 0 0; }
+
+.auth__hint { margin: -6px 0 10px; font-size: 0.74rem; color: var(--muted); line-height: 1.4; }
+.auth__hint--bad { color: var(--danger); }
+.auth__hint--good { color: var(--secondary); }
+
+.auth__divider {
+  display: flex; align-items: center; gap: 10px; margin: 18px 0 14px;
+  color: var(--muted); font-size: 0.78rem; font-weight: 600;
+}
+.auth__divider::before, .auth__divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
 .linkbtn {
   background: transparent; border: none; color: var(--accent); font-family: var(--font-ui);

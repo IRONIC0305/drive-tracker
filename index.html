@@ -34,6 +34,32 @@
       <button class="linkbtn guest-banner__action" id="saveAccountBtn" type="button">Save my account</button>
     </div>
 
+    <!-- ============ Username prompt (any account with no username yet —
+         pre-existing accounts from before this feature, or a guest whose
+         random one somehow failed to generate) ============ -->
+    <div class="welcome-banner" id="usernameBanner" hidden>
+      <div class="banner-inline">
+        <p class="welcome-banner__text">Pick a username so friends can find and add you.</p>
+        <div class="banner-inline__row">
+          <input class="field" id="usernameBannerInput" type="text" placeholder="Username" autocomplete="off"
+                 autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="20">
+          <button class="btn btn--start btn--sm" id="usernameBannerSaveBtn" type="button">Save</button>
+        </div>
+        <p class="auth__hint" id="usernameBannerStatus"></p>
+      </div>
+    </div>
+
+    <!-- ============ Incoming "invite for a drive" banner ============ -->
+    <div class="welcome-banner" id="driveInviteBanner" hidden>
+      <div class="banner-inline">
+        <p class="welcome-banner__text" id="driveInviteText"></p>
+        <div class="banner-inline__row">
+          <button class="btn btn--start btn--sm" id="driveInviteAcceptBtn" type="button">Accept</button>
+          <button class="btn btn--ghost btn--sm" id="driveInviteDeclineBtn" type="button">Decline</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ============ Auth screen (shown only when logged out, or for the
          Save-account / manual-login detour while logged in as a guest) ============ -->
     <section id="authView" hidden>
@@ -45,6 +71,9 @@
           <form id="authForm" novalidate>
             <input class="field" id="authDisplayName" type="text" placeholder="Display name (optional)"
                    autocomplete="name" maxlength="30" hidden>
+            <input class="field" id="authUsername" type="text" placeholder="Username" autocomplete="off"
+                   autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="20" hidden>
+            <p class="auth__hint" id="authUsernameStatus" hidden>3-20 characters: letters, numbers, underscore. Visible to everyone.</p>
             <input class="field" id="authEmail" type="email" placeholder="Email"
                    autocomplete="email" required>
             <input class="field" id="authPassword" type="password" placeholder="Password"
@@ -64,6 +93,9 @@
         <p class="auth__toggle" id="authCancelRow" hidden>
           <button class="linkbtn" id="authCancel" type="button">Back to app</button>
         </p>
+
+        <div class="auth__divider" id="authGuestRow"><span>or</span></div>
+        <button class="btn btn--ghost btn--block" id="authGuestBtn" type="button">Continue as guest</button>
       </div>
     </section>
 
@@ -280,6 +312,23 @@
 
         <p class="hint">Ranked within your group, for the selected time range.</p>
       </section>
+
+      <!-- ============ Friends screen ============ -->
+      <section id="friendsView" class="view screen screen--friends" hidden>
+        <h2 class="friends__title">Friends</h2>
+
+        <input class="field" id="friendSearchInput" type="text" placeholder="Search by username" autocomplete="off"
+               autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="20">
+        <div id="friendSearchResults"></div>
+
+        <div id="friendRequestsSection" hidden>
+          <h3 class="group__section-title">Requests</h3>
+          <div id="friendRequestsList"></div>
+        </div>
+
+        <h3 class="group__section-title">Your friends</h3>
+        <div id="friendsList"><p class="hint">Loading…</p></div>
+      </section>
     </div>
   </main>
 
@@ -300,6 +349,10 @@
     <button id="tabGroup" class="tab" type="button" role="tab" aria-selected="false">
       <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3" /><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" /><circle cx="17.5" cy="9.5" r="2.3" /><path d="M15.7 14.2c2.5.3 4.3 2.5 4.3 5.1" /></svg>
       <span>Group</span>
+    </button>
+    <button id="tabFriends" class="tab" type="button" role="tab" aria-selected="false">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="9" r="4" /><path d="M3 20c0-3.9 3.1-7 7-7s7 3.1 7 7" /><path d="M18 8v4M20 10h-4" /></svg>
+      <span>Friends</span>
     </button>
   </nav>
 

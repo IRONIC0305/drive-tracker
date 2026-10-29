@@ -103,6 +103,23 @@ const reportWidgetEl = document.getElementById('reportWidget');
 const reportBtnEl = document.getElementById('reportBtn');
 const reportPickerEl = document.getElementById('reportPicker');
 
+// Usernames + friends + drive invites
+const usernameBannerEl = document.getElementById('usernameBanner');
+const usernameBannerInputEl = document.getElementById('usernameBannerInput');
+const usernameBannerStatusEl = document.getElementById('usernameBannerStatus');
+const usernameBannerSaveBtnEl = document.getElementById('usernameBannerSaveBtn');
+const driveInviteBannerEl = document.getElementById('driveInviteBanner');
+const driveInviteTextEl = document.getElementById('driveInviteText');
+const driveInviteAcceptBtnEl = document.getElementById('driveInviteAcceptBtn');
+const driveInviteDeclineBtnEl = document.getElementById('driveInviteDeclineBtn');
+const tabFriendsEl = document.getElementById('tabFriends');
+const friendsViewEl = document.getElementById('friendsView');
+const friendSearchInputEl = document.getElementById('friendSearchInput');
+const friendSearchResultsEl = document.getElementById('friendSearchResults');
+const friendRequestsSectionEl = document.getElementById('friendRequestsSection');
+const friendRequestsListEl = document.getElementById('friendRequestsList');
+const friendsListEl = document.getElementById('friendsList');
+
 // --- Math helpers -----------------------------------------------------------
 
 function calculateDistance(lat1, lng1, lat2, lng2) {
@@ -468,6 +485,7 @@ const VIEWS = {
   leaderboard: { tab: tabLeaderboardEl, section: leaderboardViewEl },
   map:         { tab: tabMapEl,         section: mapViewEl },
   group:       { tab: tabGroupEl,       section: mapViewEl },
+  friends:     { tab: tabFriendsEl,     section: friendsViewEl },
 };
 
 let currentView = 'tracker';
@@ -511,6 +529,12 @@ function showView(name) {
     if (name === 'group') {
       refreshGroupMembers();
     }
+
+    // And again: a request someone sent while you already had this tab
+    // open otherwise only shows up after a reload.
+    if (name === 'friends') {
+      loadFriendsAndRequests();
+    }
   };
 
   // Switching between Map and Group is the same section staying on screen —
@@ -541,6 +565,7 @@ tabTrackerEl.addEventListener('click', () => showView('tracker'));
 tabLeaderboardEl.addEventListener('click', () => showView('leaderboard'));
 tabMapEl.addEventListener('click', () => showView('map'));
 tabGroupEl.addEventListener('click', () => showView('group'));
+tabFriendsEl.addEventListener('click', () => showView('friends'));
 
 updateMapEmptyState();
 
@@ -981,15 +1006,53 @@ const BROADCAST_INTERVAL_MS = 2000;
 // from signup metadata (falls back to the email's local-part); color is
 // deterministic from the user id. `ignoreDuplicates` means this never
 // clobbers a name/color after the first write.
+// Word pairs for an auto-assigned guest username — themed to the app
+// instead of a generic "user8217", and still reads as a real handle.
+const USERNAME_ADJECTIVES = ['swift', 'turbo', 'night', 'rapid', 'cruise', 'drift', 'nimble', 'blaze', 'silent', 'steady'];
+const USERNAME_NOUNS = ['driver', 'racer', 'rider', 'wheels', 'engine', 'throttle', 'cruiser', 'pilot', 'voyager', 'roadster'];
+
+function randomUsername() {
+  const adj = USERNAME_ADJECTIVES[Math.floor(Math.random() * USERNAME_ADJECTIVES.length)];
+  const noun = USERNAME_NOUNS[Math.floor(Math.random() * USERNAME_NOUNS.length)];
+  const num = Math.floor(10 + Math.random() * 90); // 2-digit suffix
+  return `${adj}${noun}${num}`;
+}
+
 async function ensureProfile(session) {
   const meta = session.user.user_metadata || {};
   const fallback = (session.user.email || '').split('@')[0] || 'Driver';
   const displayName = (meta.display_name && meta.display_name.trim()) || fallback;
   const color = colorForUserId(session.user.id);
+  const isAnon = !!session.user.is_anonymous;
 
-  const { error: upsertError } = await supabaseClient
-    .from('profiles')
-    .upsert({ id: session.user.id, display_name: displayName, color }, { onConflict: 'id', ignoreDuplicates: true });
+  // A username typed at signup wins; a guest session gets a random one so
+  // it still has a public handle for friend search; an existing email
+  // account from before this feature gets none yet (prompted later).
+  const chosenUsername = (meta.username || '').trim().toLowerCase() || null;
+  let usernameToTry = chosenUsername || (isAnon ? randomUsername() : null);
+  let upsertError = null;
+
+  // ignoreDuplicates (on the `id` conflict) means this is a true no-op for
+  // any profile that already exists — an existing user's username is never
+  // silently touched here. The retry loop only ever runs for a brand-new
+  // row, and only regenerates the username when WE picked it (a guest) —
+  // a username someone typed in the signup form that happens to collide
+  // surfaces as an error instead of silently swapping their choice.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { error } = await supabaseClient
+      .from('profiles')
+      .upsert(
+        { id: session.user.id, display_name: displayName, color, ...(usernameToTry ? { username: usernameToTry } : {}) },
+        { onConflict: 'id', ignoreDuplicates: true }
+      );
+    upsertError = error;
+    if (!error) break;
+    if (error.code === '23505' && isAnon && !chosenUsername) {
+      usernameToTry = randomUsername();
+      continue;
+    }
+    break;
+  }
 
   if (upsertError) {
     console.error('Profile upsert failed:', upsertError);
@@ -997,13 +1060,13 @@ async function ensureProfile(session) {
 
   const { data, error } = await supabaseClient
     .from('profiles')
-    .select('display_name, color')
+    .select('display_name, color, username')
     .eq('id', session.user.id)
     .single();
 
   if (error) {
     console.error('Profile load failed:', error);
-    myProfile = { display_name: displayName, color };
+    myProfile = { display_name: displayName, color, username: null };
   } else {
     myProfile = data;
   }
@@ -1717,6 +1780,448 @@ renderGroup();
 applyShareState();
 
 // ============================================================================
+// USERNAME PROMPT  (any account with no username yet)
+// ============================================================================
+
+function syncUsernameBanner() {
+  usernameBannerEl.hidden = !!(myProfile && myProfile.username);
+  if (!usernameBannerEl.hidden) {
+    usernameBannerInputEl.value = '';
+    usernameBannerStatusEl.textContent = '';
+    usernameBannerStatusEl.className = 'auth__hint';
+  }
+}
+
+usernameBannerSaveBtnEl.addEventListener('click', async () => {
+  const username = normalizeUsername(usernameBannerInputEl.value);
+  const formatError = usernameFormatError(username);
+  if (formatError) {
+    usernameBannerStatusEl.textContent = formatError;
+    usernameBannerStatusEl.className = 'auth__hint auth__hint--bad';
+    return;
+  }
+
+  usernameBannerSaveBtnEl.disabled = true;
+  usernameBannerSaveBtnEl.textContent = 'Saving…';
+
+  const { error } = await supabaseClient
+    .from('profiles')
+    .update({ username })
+    .eq('id', currentUserId);
+
+  usernameBannerSaveBtnEl.disabled = false;
+  usernameBannerSaveBtnEl.textContent = 'Save';
+
+  if (error) {
+    console.error('Set username failed:', error);
+    usernameBannerStatusEl.textContent = error.code === '23505' ? 'That username is already taken.' : (error.message || 'Could not save — try again.');
+    usernameBannerStatusEl.className = 'auth__hint auth__hint--bad';
+    return;
+  }
+
+  if (myProfile) myProfile.username = username;
+  usernameBannerEl.hidden = true;
+  if (currentView === 'friends') renderFriendsScreen();
+});
+
+// ============================================================================
+// FRIENDS  (real — `friend_requests` table: request/accept, searched by the
+// public `profiles.username`)
+// ============================================================================
+// Two people are friends exactly when an accepted friend_requests row
+// exists between them, in either direction — no separate friendships table.
+
+let friendsCache = [];              // [{id, display_name, username, color}]
+let incomingRequests = [];          // [{requestId, profile}]
+let outgoingRequestIds = new Set(); // addressee ids already requested, this session's view of it
+
+// Two plain queries joined client-side, not an embedded select — same
+// reasoning as groupMembers() above: friend_requests.requester_id /
+// addressee_id reference auth.users, not profiles, so PostgREST can't
+// infer a relationship to embed profiles through.
+async function loadFriendsAndRequests() {
+  if (!currentUserId) return;
+
+  const { data, error } = await supabaseClient
+    .from('friend_requests')
+    .select('id, requester_id, addressee_id, status')
+    .or(`requester_id.eq.${currentUserId},addressee_id.eq.${currentUserId}`);
+
+  if (error) {
+    console.error('Load friend requests failed:', error);
+    friendsCache = [];
+    incomingRequests = [];
+    outgoingRequestIds = new Set();
+    renderFriendsScreen();
+    return;
+  }
+
+  const rows = data || [];
+  const accepted = rows.filter((r) => r.status === 'accepted');
+  const incoming = rows.filter((r) => r.status === 'pending' && r.addressee_id === currentUserId);
+  const outgoing = rows.filter((r) => r.status === 'pending' && r.requester_id === currentUserId);
+
+  outgoingRequestIds = new Set(outgoing.map((r) => r.addressee_id));
+
+  const otherIds = Array.from(new Set([
+    ...accepted.map((r) => (r.requester_id === currentUserId ? r.addressee_id : r.requester_id)),
+    ...incoming.map((r) => r.requester_id),
+  ]));
+
+  let profilesById = new Map();
+  if (otherIds.length > 0) {
+    const { data: profileRows, error: profileError } = await supabaseClient
+      .from('profiles')
+      .select('id, display_name, username, color')
+      .in('id', otherIds);
+    if (profileError) console.error('Load friend profiles failed:', profileError);
+    profilesById = new Map((profileRows || []).map((p) => [p.id, p]));
+  }
+
+  friendsCache = accepted
+    .map((r) => profilesById.get(r.requester_id === currentUserId ? r.addressee_id : r.requester_id))
+    .filter(Boolean);
+
+  incomingRequests = incoming
+    .map((r) => ({ requestId: r.id, profile: profilesById.get(r.requester_id) }))
+    .filter((r) => r.profile);
+
+  renderFriendsScreen();
+}
+
+function relationshipWith(userId) {
+  if (friendsCache.some((f) => f.id === userId)) return 'friends';
+  if (outgoingRequestIds.has(userId)) return 'requested';
+  if (incomingRequests.some((r) => r.profile.id === userId)) return 'incoming';
+  return 'none';
+}
+
+let friendSearchToken = 0;
+async function searchUsers(rawQuery) {
+  const query = normalizeUsername(rawQuery);
+  const token = ++friendSearchToken;
+
+  if (!query) {
+    friendSearchResultsEl.innerHTML = '';
+    return;
+  }
+
+  const { data, error } = await supabaseClient
+    .from('profiles')
+    .select('id, display_name, username, color')
+    .ilike('username', `${query}%`)
+    .neq('id', currentUserId)
+    .limit(10);
+
+  if (token !== friendSearchToken) return; // a newer keystroke superseded this search
+
+  if (error) {
+    console.error('User search failed:', error);
+    friendSearchResultsEl.innerHTML = '<p class="hint">Search failed — try again.</p>';
+    return;
+  }
+
+  renderSearchResults((data || []).filter((p) => p.username));
+}
+
+let friendSearchTimer = null;
+friendSearchInputEl.addEventListener('input', () => {
+  clearTimeout(friendSearchTimer);
+  friendSearchTimer = setTimeout(() => searchUsers(friendSearchInputEl.value), 300);
+});
+
+function renderSearchResults(results) {
+  if (results.length === 0) {
+    friendSearchResultsEl.innerHTML = friendSearchInputEl.value.trim()
+      ? '<p class="hint">No users found.</p>'
+      : '';
+    return;
+  }
+
+  friendSearchResultsEl.innerHTML = results.map((profile) => {
+    const rel = relationshipWith(profile.id);
+    const actionHtml =
+      rel === 'friends' ? '<span class="tag">Friends</span>' :
+      rel === 'requested' ? '<span class="friend__speed--muted">Requested</span>' :
+      rel === 'incoming' ? '<span class="friend__speed--muted">Check requests</span>' :
+      `<button class="btn btn--start btn--sm" data-add="${profile.id}" type="button">Add</button>`;
+
+    return `
+      <div class="friend">
+        <span class="friend__avatar">${initialsFor(profile.display_name)}</span>
+        <div class="friend__body">
+          <span class="friend__name">${profile.display_name}</span>
+          <span class="friend__sub">@${profile.username}</span>
+        </div>
+        ${actionHtml}
+      </div>`;
+  }).join('');
+}
+
+friendSearchResultsEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-add]');
+  if (btn) sendFriendRequest(btn.dataset.add, btn);
+});
+
+async function sendFriendRequest(addresseeId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+  const { error } = await supabaseClient
+    .from('friend_requests')
+    .insert({ requester_id: currentUserId, addressee_id: addresseeId });
+
+  if (error) {
+    console.error('Send friend request failed:', error);
+    if (btn) { btn.disabled = false; btn.textContent = 'Add'; }
+    return;
+  }
+
+  outgoingRequestIds.add(addresseeId);
+  if (btn) btn.outerHTML = '<span class="friend__speed--muted">Requested</span>';
+  loadFriendsAndRequests();
+}
+
+async function respondToFriendRequest(requestId, accept) {
+  const { error } = accept
+    ? await supabaseClient
+        .from('friend_requests')
+        .update({ status: 'accepted', responded_at: new Date().toISOString() })
+        .eq('id', requestId)
+    : await supabaseClient.from('friend_requests').delete().eq('id', requestId);
+
+  if (error) console.error(`${accept ? 'Accept' : 'Decline'} friend request failed:`, error);
+  loadFriendsAndRequests();
+}
+
+async function removeFriend(friendId) {
+  const { error } = await supabaseClient
+    .from('friend_requests')
+    .delete()
+    .or(`and(requester_id.eq.${currentUserId},addressee_id.eq.${friendId}),and(requester_id.eq.${friendId},addressee_id.eq.${currentUserId})`);
+
+  if (error) console.error('Remove friend failed:', error);
+  loadFriendsAndRequests();
+}
+
+function renderFriendsScreen() {
+  friendRequestsSectionEl.hidden = incomingRequests.length === 0;
+  friendRequestsListEl.innerHTML = incomingRequests.map((r) => `
+    <div class="friend">
+      <span class="friend__avatar">${initialsFor(r.profile.display_name)}</span>
+      <div class="friend__body">
+        <span class="friend__name">${r.profile.display_name}</span>
+        <span class="friend__sub">@${r.profile.username}</span>
+      </div>
+      <div class="friend__actions">
+        <button class="btn btn--start btn--sm" data-accept="${r.requestId}" type="button">Accept</button>
+        <button class="btn btn--ghost btn--sm" data-decline="${r.requestId}" type="button">Decline</button>
+      </div>
+    </div>`).join('');
+
+  friendsListEl.innerHTML = friendsCache.length === 0
+    ? '<p class="hint">No friends yet — search a username above to add one.</p>'
+    : friendsCache.map((f) => `
+      <div class="friend">
+        <span class="friend__avatar">${initialsFor(f.display_name)}</span>
+        <div class="friend__body">
+          <span class="friend__name">${f.display_name}</span>
+          <span class="friend__sub">@${f.username}</span>
+        </div>
+        <div class="friend__actions">
+          <button class="btn btn--start btn--sm" data-invite="${f.id}" type="button">Invite to drive</button>
+          <button class="btn btn--ghost btn--sm" data-remove="${f.id}" type="button">Remove</button>
+        </div>
+      </div>`).join('');
+}
+
+friendRequestsListEl.addEventListener('click', (e) => {
+  const acceptBtn = e.target.closest('[data-accept]');
+  const declineBtn = e.target.closest('[data-decline]');
+  if (acceptBtn) respondToFriendRequest(acceptBtn.dataset.accept, true);
+  if (declineBtn) respondToFriendRequest(declineBtn.dataset.decline, false);
+});
+
+friendsListEl.addEventListener('click', (e) => {
+  const inviteBtn = e.target.closest('[data-invite]');
+  const removeBtn = e.target.closest('[data-remove]');
+  if (inviteBtn) sendDriveInvite(inviteBtn.dataset.invite, inviteBtn);
+  if (removeBtn) removeFriend(removeBtn.dataset.remove);
+});
+
+// ============================================================================
+// DRIVE INVITES  ("invite a friend for a drive" — reuses the existing group
+// + invite-code machinery entirely; see section 9 of supabase-schema.sql)
+// ============================================================================
+
+let pendingDriveInvite = null; // the most recent incoming pending invite, or null
+
+// Invites you into your current group if you're already in one, otherwise
+// spins up a fresh one just for this invite — same create-group path
+// handleCreateGroup() uses, just without its own form fields.
+async function sendDriveInvite(friendId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Inviting…'; }
+
+  let group = myGroup;
+  if (!group) {
+    const friendProfile = friendsCache.find((f) => f.id === friendId);
+    const name = friendProfile ? `Drive with ${friendProfile.display_name}` : 'Drive';
+    let inserted = null;
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 5 && !inserted; attempt++) {
+      const { data, error } = await supabaseClient
+        .from('groups')
+        .insert({ name, invite_code: generateInviteCode(), created_by: currentUserId })
+        .select()
+        .single();
+      if (error) { lastError = error; if (error.code !== '23505') break; }
+      else inserted = data;
+    }
+
+    if (!inserted) {
+      console.error('Create drive-invite group failed:', lastError);
+      if (btn) { btn.disabled = false; btn.textContent = 'Invite to drive'; }
+      return;
+    }
+
+    const { error: memberError } = await supabaseClient
+      .from('group_members')
+      .insert({ group_id: inserted.id, user_id: currentUserId });
+    if (memberError) console.error('Join own drive-invite group failed:', memberError);
+
+    group = inserted;
+    myGroup = inserted;
+    await onGroupChanged();
+  }
+
+  const { error } = await supabaseClient
+    .from('drive_invites')
+    .insert({ from_user_id: currentUserId, to_user_id: friendId, group_id: group.id, invite_code: group.invite_code });
+
+  if (error) console.error('Send drive invite failed:', error);
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = error ? 'Invite to drive' : 'Invited!';
+    if (!error) setTimeout(() => { btn.textContent = 'Invite to drive'; }, 1500);
+  }
+}
+
+async function loadPendingDriveInvite() {
+  if (!currentUserId) { pendingDriveInvite = null; syncDriveInviteBanner(); return; }
+
+  const { data, error } = await supabaseClient
+    .from('drive_invites')
+    .select('id, from_user_id, invite_code, created_at')
+    .eq('to_user_id', currentUserId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Load drive invites failed:', error);
+    pendingDriveInvite = null;
+    syncDriveInviteBanner();
+    return;
+  }
+
+  if (!data) {
+    pendingDriveInvite = null;
+    syncDriveInviteBanner();
+    return;
+  }
+
+  const { data: fromProfile } = await supabaseClient
+    .from('profiles')
+    .select('display_name')
+    .eq('id', data.from_user_id)
+    .maybeSingle();
+
+  pendingDriveInvite = { ...data, fromName: (fromProfile && fromProfile.display_name) || 'Someone' };
+  syncDriveInviteBanner();
+}
+
+function syncDriveInviteBanner() {
+  if (!pendingDriveInvite) {
+    driveInviteBannerEl.hidden = true;
+    return;
+  }
+  driveInviteTextEl.textContent = `${pendingDriveInvite.fromName} invited you for a drive!`;
+  driveInviteBannerEl.hidden = false;
+}
+
+driveInviteAcceptBtnEl.addEventListener('click', async () => {
+  if (!pendingDriveInvite) return;
+  const invite = pendingDriveInvite;
+  driveInviteAcceptBtnEl.disabled = true;
+
+  const { data, error } = await supabaseClient.rpc('join_group_by_code', { p_code: invite.invite_code });
+  if (error) {
+    console.error('Accept drive invite failed:', error);
+    driveInviteAcceptBtnEl.disabled = false;
+    return;
+  }
+
+  await supabaseClient.from('drive_invites').update({ status: 'accepted' }).eq('id', invite.id);
+
+  myGroup = data;
+  await onGroupChanged();
+  pendingDriveInvite = null;
+  syncDriveInviteBanner();
+  driveInviteAcceptBtnEl.disabled = false;
+  showView('map'); // land them straight on the shared map
+});
+
+driveInviteDeclineBtnEl.addEventListener('click', async () => {
+  if (!pendingDriveInvite) return;
+  const invite = pendingDriveInvite;
+  driveInviteDeclineBtnEl.disabled = true;
+  await supabaseClient.from('drive_invites').update({ status: 'declined' }).eq('id', invite.id);
+  driveInviteDeclineBtnEl.disabled = false;
+  pendingDriveInvite = null;
+  syncDriveInviteBanner();
+});
+
+// --- Personal realtime channel: incoming friend requests + drive invites ---
+// Mirrors the group channel pattern (private:true + a matching Realtime
+// Authorization policy, see supabase-schema.sql section 10) rather than a
+// plain channel, to match however this project has Realtime configured.
+
+let personalChannel = null;
+
+function joinPersonalChannel() {
+  if (personalChannel || !currentUserId) return;
+
+  personalChannel = supabaseClient.channel(`user:${currentUserId}`, { config: { private: true } });
+
+  // No single-column filter covers "I'm either party" — RLS still scopes
+  // which rows actually reach this client either way, so an unfiltered
+  // subscription is safe, just slightly less targeted.
+  personalChannel.on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'friend_requests' },
+    () => loadFriendsAndRequests()
+  );
+  personalChannel.on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'drive_invites', filter: `to_user_id=eq.${currentUserId}` },
+    () => loadPendingDriveInvite()
+  );
+
+  personalChannel.subscribe((status) => {
+    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      console.error('Personal realtime channel error:', status);
+    }
+  });
+}
+
+function leavePersonalChannel() {
+  if (!personalChannel) return;
+  supabaseClient.removeChannel(personalChannel);
+  personalChannel = null;
+}
+
+// ============================================================================
 // LEADERBOARD  (real — aggregated from the `trips` table, scoped to your
 // current group)
 // ============================================================================
@@ -2115,6 +2620,10 @@ const authPanelEl = document.getElementById('authPanel');
 const authBodyEl = document.getElementById('authBody');
 const authFormEl = document.getElementById('authForm');
 const authDisplayNameEl = document.getElementById('authDisplayName');
+const authUsernameEl = document.getElementById('authUsername');
+const authUsernameStatusEl = document.getElementById('authUsernameStatus');
+const authGuestRowEl = document.getElementById('authGuestRow');
+const authGuestBtnEl = document.getElementById('authGuestBtn');
 const authEmailEl = document.getElementById('authEmail');
 const authPasswordEl = document.getElementById('authPassword');
 const authErrorEl = document.getElementById('authError');
@@ -2211,6 +2720,71 @@ confirmBannerDismissEl.addEventListener('click', () => {
   confirmBannerEl.hidden = true;
 });
 
+// --- Username picking (signup form + reused by the "choose a username"
+// prompt for pre-existing accounts) -----------------------------------------
+
+function normalizeUsername(raw) {
+  return (raw || '').trim().toLowerCase();
+}
+
+function usernameFormatError(username) {
+  if (!username) return 'Choose a username.';
+  if (!/^[a-z0-9_]{3,20}$/.test(username)) {
+    return 'Use 3-20 letters, numbers, or underscores.';
+  }
+  return null;
+}
+
+// null means "couldn't check" (network hiccup) — callers should not treat
+// that the same as "taken".
+async function isUsernameTaken(username) {
+  const { data, error } = await supabaseClient
+    .from('profiles')
+    .select('id')
+    .eq('username', username)
+    .maybeSingle();
+  if (error) {
+    console.error('Username availability check failed:', error);
+    return null;
+  }
+  return !!data;
+}
+
+let usernameCheckToken = 0;
+async function checkUsernameLive() {
+  const username = normalizeUsername(authUsernameEl.value);
+  const formatError = usernameFormatError(username);
+  if (formatError) {
+    authUsernameStatusEl.textContent = formatError;
+    authUsernameStatusEl.className = 'auth__hint auth__hint--bad';
+    return;
+  }
+
+  authUsernameStatusEl.textContent = 'Checking availability…';
+  authUsernameStatusEl.className = 'auth__hint';
+
+  const token = ++usernameCheckToken;
+  const taken = await isUsernameTaken(username);
+  if (token !== usernameCheckToken) return; // superseded by a newer keystroke
+
+  if (taken == null) {
+    authUsernameStatusEl.textContent = '3-20 characters: letters, numbers, underscore. Visible to everyone.';
+    authUsernameStatusEl.className = 'auth__hint';
+  } else if (taken) {
+    authUsernameStatusEl.textContent = 'That username is already taken.';
+    authUsernameStatusEl.className = 'auth__hint auth__hint--bad';
+  } else {
+    authUsernameStatusEl.textContent = 'Available!';
+    authUsernameStatusEl.className = 'auth__hint auth__hint--good';
+  }
+}
+
+let usernameCheckTimer = null;
+authUsernameEl.addEventListener('input', () => {
+  clearTimeout(usernameCheckTimer);
+  usernameCheckTimer = setTimeout(checkUsernameLive, 400);
+});
+
 // --- Form copy + the login/signup toggle --------------------------------
 
 function setAuthMode(mode) {
@@ -2256,6 +2830,23 @@ function setAuthMode(mode) {
 
   authPasswordEl.setAttribute('autocomplete', isLogin ? 'current-password' : 'new-password');
   authDisplayNameEl.hidden = isLogin; // asked for at signup and save
+
+  // Username is chosen once, at signup — an existing account (including a
+  // saved guest) keeps whichever one it already has, changeable later via
+  // the "choose a username" prompt rather than cluttering this form.
+  const showUsername = mode === 'signup';
+  authUsernameEl.hidden = !showUsername;
+  authUsernameStatusEl.hidden = !showUsername;
+  if (showUsername) {
+    authUsernameStatusEl.textContent = '3-20 characters: letters, numbers, underscore. Visible to everyone.';
+    authUsernameStatusEl.className = 'auth__hint';
+  }
+
+  // "Continue as guest" is a second, equally-valid entry point alongside
+  // log in/sign up — but not during the Save-account detour, where a
+  // session (a guest's own) already exists and starting ANOTHER guest
+  // session here would just abandon it with no warning.
+  authGuestRowEl.hidden = isSave;
 
   hideAuthMessage();
 }
@@ -2313,6 +2904,15 @@ function friendlyAuthError(error, mode) {
   if (msg.includes('rate limit')) {
     return "This project has hit its email sending limit — it can take up to an hour to reset. If you already have an account, try logging in instead.";
   }
+  // In-app browsers (Messenger, Instagram, Facebook, TikTok) commonly
+  // restrict or wipe localStorage in their embedded webview, which is
+  // exactly where Supabase keeps your session — it looks logged-in but the
+  // token is already gone by the time this call fires. No in-app fix for
+  // that storage restriction; the real fix is opening the link in a real
+  // browser, which is what this message tells them to do.
+  if (msg.includes('auth session missing')) {
+    return "Lost your session — this often happens inside an app's built-in browser (like Messenger or Instagram). Tap the ⋯ or share icon and choose \"Open in Safari\" (or Chrome), then try again there.";
+  }
   return (error && error.message) || 'Something went wrong. Try again.';
 }
 
@@ -2340,6 +2940,34 @@ async function submitAuth() {
     return;
   }
 
+  // "Save my account" needs an existing session to amend — check for one
+  // up front rather than letting updateUser() fail with a raw "Auth
+  // session missing!" after a round trip. This specifically catches in-app
+  // browsers (Messenger, Instagram, etc.) silently dropping the session —
+  // see the comment on that case in friendlyAuthError().
+  if (authMode === 'save') {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session) {
+      showAuthMessage(friendlyAuthError({ message: 'Auth session missing' }, 'save'));
+      return;
+    }
+  }
+
+  let username = null;
+  if (authMode === 'signup') {
+    username = normalizeUsername(authUsernameEl.value);
+    const formatError = usernameFormatError(username);
+    if (formatError) {
+      showAuthMessage(formatError);
+      return;
+    }
+    const taken = await isUsernameTaken(username);
+    if (taken) {
+      showAuthMessage('That username is already taken.');
+      return;
+    }
+  }
+
   // Captured once, up front: if a success branch below calls setAuthMode()
   // to switch modes mid-flow (signup-with-no-session falling back to
   // login), that call already sets the correct idle label on its own —
@@ -2360,7 +2988,7 @@ async function submitAuth() {
             email,
             password,
             options: {
-              data: { display_name: displayName || undefined },
+              data: { display_name: displayName || undefined, username },
               // Preserves ?join=CODE across the "confirm your email" redirect,
               // so clicking an invite link, signing up, then confirming still
               // lands back on the link that auto-joins the group.
@@ -2466,6 +3094,24 @@ authCancelEl.addEventListener('click', () => {
   showAppScreen();
 });
 
+// The second of the two sign-in paths: skip the form entirely and start a
+// fresh guest session (gets a random username — see ensureProfile()).
+// onAuthStateChange below takes it from here once the session lands.
+authGuestBtnEl.addEventListener('click', async () => {
+  hideAuthMessage();
+  authGuestBtnEl.disabled = true;
+  authGuestBtnEl.textContent = 'Starting…';
+
+  const { error } = await supabaseClient.auth.signInAnonymously();
+
+  authGuestBtnEl.disabled = false;
+  authGuestBtnEl.textContent = 'Continue as guest';
+
+  if (error) {
+    showAuthMessage("Guest access isn't available right now — try logging in or creating an account instead.");
+  }
+});
+
 logoutBtnEl.addEventListener('click', async () => {
   // An anonymous session has no password/email backing it — signing out
   // destroys that identity for good, taking every trip logged under it
@@ -2487,10 +3133,14 @@ async function loadAppData(session) {
   syncGuestBanner();
   maybeShowConfirmBanner();
   await ensureProfile(session);
+  syncUsernameBanner();
   await loadMyGroup();
   await onGroupChanged();
   loadTripHistory();
   consumeInviteLinkIfAny();
+  joinPersonalChannel();
+  loadFriendsAndRequests();
+  loadPendingDriveInvite();
 }
 
 // Tear down everything that only makes sense while logged in.
@@ -2500,7 +3150,14 @@ function clearAppData() {
   myGroup = null;
   groupMembersCache = [];
   myProfile = null;
+  friendsCache = [];
+  incomingRequests = [];
+  outgoingRequestIds = new Set();
+  pendingDriveInvite = null;
+  syncDriveInviteBanner();
+  usernameBannerEl.hidden = true;
   leaveGroupChannel();
+  leavePersonalChannel();
   stopLocationBroadcast();
 }
 

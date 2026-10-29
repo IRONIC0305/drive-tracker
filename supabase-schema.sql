@@ -266,3 +266,158 @@ begin
     alter publication supabase_realtime add table public.group_members;
   end if;
 end $$;
+
+-- ============================================================================
+-- 7. Usernames — unique, public, visible to every signed-in user
+-- ============================================================================
+-- Nullable: existing profiles predate this column and won't have one until
+-- the app prompts them to set one. Format: 3-20 chars, lowercase a-z/0-9/_
+-- (the app normalizes to lowercase before ever writing this column).
+
+alter table public.profiles add column if not exists username text;
+
+alter table public.profiles drop constraint if exists profiles_username_format;
+alter table public.profiles add constraint profiles_username_format
+  check (username is null or username ~ '^[a-z0-9_]{3,20}$');
+
+-- A unique INDEX rather than a unique column constraint, specifically so it
+-- allows multiple NULLs (every pre-existing profile) while still enforcing
+-- true uniqueness the moment a real value is set.
+drop index if exists profiles_username_idx;
+create unique index profiles_username_idx on public.profiles (username);
+
+-- Usernames are explicitly public — broadens profile visibility from "your
+-- own / a groupmate's" to "any signed-in user," which is what username
+-- search for Add Friend needs. The narrower policies above stay in place
+-- too (redundant now, but harmless — Postgres OR's permissive policies).
+drop policy if exists "select all profiles" on public.profiles;
+create policy "select all profiles"
+  on public.profiles for select to authenticated
+  using (true);
+
+-- ============================================================================
+-- 8. Friend requests — the only source of truth for "are these two friends"
+-- ============================================================================
+-- No separate `friendships` table: two people are friends exactly when an
+-- accepted row exists between them (either direction). One row per pair,
+-- never two — the unique constraint blocks a duplicate even if sent in the
+-- other direction's column order wouldn't naturally collide on its own (the
+-- app checks both directions before inserting; this is the hard backstop).
+
+create table if not exists public.friend_requests (
+  id           uuid primary key default gen_random_uuid(),
+  requester_id uuid not null references auth.users(id) on delete cascade,
+  addressee_id uuid not null references auth.users(id) on delete cascade,
+  status       text not null default 'pending' check (status in ('pending', 'accepted', 'declined')),
+  created_at   timestamptz not null default now(),
+  responded_at timestamptz,
+  constraint friend_requests_not_self check (requester_id <> addressee_id),
+  constraint friend_requests_unique_pair unique (requester_id, addressee_id)
+);
+alter table public.friend_requests enable row level security;
+
+drop policy if exists "see my friend requests" on public.friend_requests;
+drop policy if exists "send friend requests" on public.friend_requests;
+drop policy if exists "respond to friend requests" on public.friend_requests;
+drop policy if exists "remove friend requests" on public.friend_requests;
+
+create policy "see my friend requests"
+  on public.friend_requests for select to authenticated
+  using (requester_id = auth.uid() or addressee_id = auth.uid());
+
+create policy "send friend requests"
+  on public.friend_requests for insert to authenticated
+  with check (requester_id = auth.uid());
+
+-- Only the addressee can accept/decline — the requester doesn't get to
+-- flip their own pending request to "accepted".
+create policy "respond to friend requests"
+  on public.friend_requests for update to authenticated
+  using (addressee_id = auth.uid())
+  with check (addressee_id = auth.uid());
+
+-- Either side can remove a request/friendship — cancelling a sent request,
+-- declining by deleting instead of marking declined, or unfriending later.
+create policy "remove friend requests"
+  on public.friend_requests for delete to authenticated
+  using (requester_id = auth.uid() or addressee_id = auth.uid());
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'friend_requests'
+  ) then
+    alter publication supabase_realtime add table public.friend_requests;
+  end if;
+end $$;
+
+-- ============================================================================
+-- 9. Drive invites — "invite a friend for a drive"
+-- ============================================================================
+-- Deliberately reuses the existing group/invite-code machinery instead of
+-- building a parallel location-sharing system: accepting an invite just
+-- calls the same join_group_by_code() RPC every manual invite-code entry
+-- already uses. invite_code is copied onto the row at creation time (not
+-- looked up via group_id at accept time) so the recipient never needs
+-- their own SELECT access to the `groups` table, which is deliberately
+-- locked down — see the comment in section 3 above.
+
+create table if not exists public.drive_invites (
+  id           uuid primary key default gen_random_uuid(),
+  from_user_id uuid not null references auth.users(id) on delete cascade,
+  to_user_id   uuid not null references auth.users(id) on delete cascade,
+  group_id     uuid not null references public.groups(id) on delete cascade,
+  invite_code  text not null,
+  status       text not null default 'pending' check (status in ('pending', 'accepted', 'declined')),
+  created_at   timestamptz not null default now(),
+  constraint drive_invites_not_self check (from_user_id <> to_user_id)
+);
+alter table public.drive_invites enable row level security;
+
+drop policy if exists "see my drive invites" on public.drive_invites;
+drop policy if exists "send drive invites" on public.drive_invites;
+drop policy if exists "respond to drive invites" on public.drive_invites;
+
+create policy "see my drive invites"
+  on public.drive_invites for select to authenticated
+  using (from_user_id = auth.uid() or to_user_id = auth.uid());
+
+create policy "send drive invites"
+  on public.drive_invites for insert to authenticated
+  with check (from_user_id = auth.uid());
+
+create policy "respond to drive invites"
+  on public.drive_invites for update to authenticated
+  using (to_user_id = auth.uid())
+  with check (to_user_id = auth.uid());
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'drive_invites'
+  ) then
+    alter publication supabase_realtime add table public.drive_invites;
+  end if;
+end $$;
+
+-- ============================================================================
+-- 10. Realtime transport for a personal channel — incoming friend requests
+-- and drive invites, live, without a reload
+-- ============================================================================
+-- Same pattern as section 5's per-group channel: makes each user's own
+-- `user:<user_id>` topic private to them, so the client can subscribe to
+-- postgres_changes on friend_requests/drive_invites as soon as something
+-- involving them changes, instead of only refreshing on tab-open.
+
+drop policy if exists "users can use their own personal realtime channel" on realtime.messages;
+
+create policy "users can use their own personal realtime channel"
+  on realtime.messages for all to authenticated
+  using (realtime.topic() = 'user:' || auth.uid()::text)
+  with check (realtime.topic() = 'user:' || auth.uid()::text);
