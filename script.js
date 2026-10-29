@@ -2004,6 +2004,11 @@ async function removeFriend(friendId) {
 }
 
 function renderFriendsScreen() {
+  // Keep any still-visible search results in sync — otherwise a result row
+  // can keep showing "Requested" after the other person has since accepted,
+  // until the next fresh search.
+  if (friendSearchInputEl.value.trim()) searchUsers(friendSearchInputEl.value);
+
   friendRequestsSectionEl.hidden = incomingRequests.length === 0;
   friendRequestsListEl.innerHTML = incomingRequests.map((r) => `
     <div class="friend">
