@@ -1897,6 +1897,12 @@ function relationshipWith(userId) {
 }
 
 let friendSearchToken = 0;
+// Escapes ILIKE's own wildcard characters so a literal "_" in someone's
+// username (a valid character in it) doesn't act as a single-char wildcard.
+function escapeIlike(text) {
+  return text.replace(/[%_\\]/g, (c) => '\\' + c);
+}
+
 async function searchUsers(rawQuery) {
   const query = normalizeUsername(rawQuery);
   const token = ++friendSearchToken;
@@ -1906,10 +1912,12 @@ async function searchUsers(rawQuery) {
     return;
   }
 
+  // Matches anywhere in the username, not just at the start — "racer"
+  // should find "turboracer99", not only names starting with "racer".
   const { data, error } = await supabaseClient
     .from('profiles')
     .select('id, display_name, username, color')
-    .ilike('username', `${query}%`)
+    .ilike('username', `%${escapeIlike(query)}%`)
     .neq('id', currentUserId)
     .limit(10);
 

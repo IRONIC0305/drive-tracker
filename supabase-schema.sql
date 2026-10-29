@@ -421,3 +421,40 @@ create policy "users can use their own personal realtime channel"
   on realtime.messages for all to authenticated
   using (realtime.topic() = 'user:' || auth.uid()::text)
   with check (realtime.topic() = 'user:' || auth.uid()::text);
+
+-- ============================================================================
+-- 11. Backfill: assign a username to every existing profile that doesn't
+-- have one yet
+-- ============================================================================
+-- Anyone who signed up or joined as a guest before this feature shipped has
+-- a profile row with username = null — they're correctly prompted to pick
+-- one next time they open the app (see the username banner), but until
+-- they do, nobody can find or add them. This assigns each of them a random
+-- one right now instead, the same scheme ensureProfile() uses for new
+-- guests, so search works immediately for the whole existing user base.
+-- Safe to re-run — only ever touches rows where username is still null.
+
+do $$
+declare
+  rec record;
+  candidate text;
+  adjectives text[] := array['swift','turbo','night','rapid','cruise','drift','nimble','blaze','silent','steady'];
+  nouns text[] := array['driver','racer','rider','wheels','engine','throttle','cruiser','pilot','voyager','roadster'];
+  tries int;
+begin
+  for rec in select id from public.profiles where username is null loop
+    tries := 0;
+    loop
+      candidate := adjectives[1 + floor(random() * array_length(adjectives, 1))::int]
+                || nouns[1 + floor(random() * array_length(nouns, 1))::int]
+                || (10 + floor(random() * 80))::int::text;
+      begin
+        update public.profiles set username = candidate where id = rec.id;
+        exit;
+      exception when unique_violation then
+        tries := tries + 1;
+        exit when tries > 10; -- extremely unlikely; don't loop forever over one row
+      end;
+    end loop;
+  end loop;
+end $$;
