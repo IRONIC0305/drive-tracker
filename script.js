@@ -3233,3 +3233,17 @@ async function initAuth() {
 }
 
 initAuth();
+
+// ============================================================================
+// PWA — service worker registration (installability + offline app shell)
+// ============================================================================
+// See sw.js: it only ever caches this app's own static files, never
+// Supabase/Leaflet/font requests, so live data is unaffected either way.
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((error) => {
+      console.error('Service worker registration failed:', error);
+    });
+  });
+}
