@@ -6,6 +6,23 @@ leaderboard, hazard reporting, and a username-based friends system.
 
 **Live app:** https://ironic0305.github.io/drive-tracker/
 
+## Demo
+
+[![Drive Tracker demo — click to play](demo/poster.jpg)](demo/drive-tracker-demo.mp4)
+
+*GitHub doesn't play video inline in a README — click the image above to open the clip (or watch it in-app via the "Watch demo" link on the login screen / footer).*
+
+A scripted ~2 minute tour, recorded against the real app (a simulated
+drive around Sydney, not staged screenshots):
+
+- **Sign in** — anonymous guest sign-in, no form required to start.
+- **Tracker** — start a trip, live speedometer, distance/speed/time
+  stats, and the speed-over-time chart updating as the drive happens.
+- **Map** — the finished trip's route drawn on the map.
+- **Leaderboard** — ranked by Distance, Top speed, and Trips.
+- **Group** — the create/join screen for sharing live location with a group.
+- **Friends** — search by username, send/accept friend requests.
+
 ## Features
 
 - **Tracker** — GPS trip tracking with a live speedometer, distance/speed
