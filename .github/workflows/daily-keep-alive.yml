@@ -1,0 +1,29 @@
+name: Daily keep-alive commit
+
+# Runs independently of any local machine or session — a scheduled,
+# labeled empty commit to main, once a day, purely to keep the
+# contribution graph active. It never touches real code: main isn't
+# deployed (production is — see README.md), and this never runs on any
+# other branch. workflow_dispatch lets it be triggered manually to test.
+
+on:
+  schedule:
+    - cron: '7 3 * * *' # 03:07 UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Create an empty, clearly-labeled commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: daily keep-alive commit ($(date -u +%Y-%m-%d))"
+          git push origin main
