@@ -107,6 +107,8 @@
 
         <div class="auth__divider" id="authGuestRow"><span>or</span></div>
         <button class="btn btn--ghost btn--block" id="authGuestBtn" type="button">Continue as guest</button>
+
+        <a href="demo/drive-tracker-demo.mp4" class="auth-demo-link" data-open-demo>Watch demo</a>
       </div>
     </section>
 
@@ -340,8 +342,27 @@
         <h3 class="group__section-title">Your friends</h3>
         <div id="friendsList"><p class="hint">Loading…</p></div>
       </section>
+
+      <!-- Persistent across every tab (not inside any .view section) -->
+      <footer class="app-footer">
+        <a href="demo/drive-tracker-demo.mp4" data-open-demo>Watch demo</a>
+      </footer>
     </div>
   </main>
+
+  <!-- ============ Demo video overlay ============ -->
+  <div class="demo-overlay" id="demoOverlay" hidden>
+    <div class="demo-overlay__backdrop" id="demoOverlayBackdrop"></div>
+    <div class="demo-overlay__panel">
+      <button class="demo-overlay__close" id="demoCloseBtn" type="button" aria-label="Close demo video">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
+      <video id="demoVideo" controls playsinline poster="demo/poster.jpg" preload="none">
+        <source src="demo/drive-tracker-demo.mp4" type="video/mp4">
+        Your browser can't play this video — <a href="demo/drive-tracker-demo.mp4">download it instead</a>.
+      </video>
+    </div>
+  </div>
 
   <!-- ============ Bottom tab bar ============ -->
   <nav class="tabbar" id="tabbar" aria-label="Views" hidden>

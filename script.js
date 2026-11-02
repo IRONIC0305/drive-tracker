@@ -3247,3 +3247,35 @@ if ('serviceWorker' in navigator) {
     });
   });
 }
+
+// ============================================================================
+// DEMO VIDEO OVERLAY — UI only, no effect on tracking/auth/data logic
+// ============================================================================
+
+const demoOverlayEl = document.getElementById('demoOverlay');
+const demoVideoEl = document.getElementById('demoVideo');
+const demoCloseBtnEl = document.getElementById('demoCloseBtn');
+const demoOverlayBackdropEl = document.getElementById('demoOverlayBackdrop');
+
+function openDemoOverlay() {
+  demoOverlayEl.hidden = false;
+  demoVideoEl.currentTime = 0;
+  demoVideoEl.play().catch(() => {}); // autoplay can be blocked; controls still work either way
+}
+
+function closeDemoOverlay() {
+  demoOverlayEl.hidden = true;
+  demoVideoEl.pause();
+}
+
+document.querySelectorAll('[data-open-demo]').forEach((el) => {
+  el.addEventListener('click', (e) => {
+    e.preventDefault(); // fall back to a real link (downloads the mp4) if JS never runs
+    openDemoOverlay();
+  });
+});
+demoCloseBtnEl.addEventListener('click', closeDemoOverlay);
+demoOverlayBackdropEl.addEventListener('click', closeDemoOverlay);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !demoOverlayEl.hidden) closeDemoOverlay();
+});
